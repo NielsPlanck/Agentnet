@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+.env
+.venv/
+*.egg-info/
+dist/
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Node / Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# macOS
+.DS_Store

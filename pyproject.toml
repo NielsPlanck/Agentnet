@@ -1,0 +1,24 @@
+[project]
+name = "agentnet"
+version = "0.1.0"
+description = "Agent Capability Search Engine — Google for AI agents"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "sqlalchemy[asyncio]>=2.0.0",
+    "aiosqlite>=0.20.0",
+    "pydantic-settings>=2.0.0",
+    "openai>=1.50.0",
+    "httpx>=0.27.0",
+    "cryptography>=42.0.0",
+    "tavily-python>=0.7.23",
+    "mcp>=1.26.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

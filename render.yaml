@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: agentnet
+    runtime: docker
+    repo: https://github.com/YOUR_GITHUB_USERNAME/Agentnet
+    branch: main
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    disk:
+      name: agentnet-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: AGENTNET_DATABASE_URL
+        value: sqlite+aiosqlite:////data/agentnet.db
+      - key: AGENTNET_FRONTEND_URL
+        value: https://agentnet.codiris.app
+      - key: AGENTNET_OPENAI_API_KEY
+        sync: false
+      - key: AGENTNET_GEMINI_API_KEY
+        sync: false
+      - key: AGENTNET_TAVILY_API_KEY
+        sync: false
+      - key: AGENTNET_ADMIN_PASSWORD
+        sync: false
+      - key: AGENTNET_SESSION_SECRET
+        sync: false
+      - key: AGENTNET_OAUTH_ENCRYPTION_KEY
+        sync: false

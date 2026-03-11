@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AgentNet Widget</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f3f0e8;
+        --panel: #fffdf8;
+        --panel-2: #f7f2e7;
+        --text: #1a1815;
+        --muted: #6d655a;
+        --line: #dfd4c2;
+        --accent: #0d9488;
+        --accent-2: #134e4a;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: Georgia, "Times New Roman", serif;
+        background:
+          radial-gradient(circle at top right, rgba(13, 148, 136, 0.16), transparent 28%),
+          linear-gradient(180deg, #f7f3eb 0%, var(--bg) 100%);
+        color: var(--text);
+      }
+
+      .shell {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+
+      .hero {
+        background: linear-gradient(180deg, rgba(255, 253, 248, 0.96), rgba(247, 242, 231, 0.92));
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        padding: 22px;
+        box-shadow: 0 10px 30px rgba(39, 27, 12, 0.06);
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font: 600 12px/1.2 ui-sans-serif, system-ui, sans-serif;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--accent-2);
+      }
+
+      .eyebrow::before {
+        content: "";
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: var(--accent);
+        box-shadow: 0 0 0 4px rgba(13, 148, 136, 0.14);
+      }
+
+      h1 {
+        margin: 14px 0 8px;
+        font-size: clamp(32px, 5vw, 52px);
+        line-height: 0.96;
+        letter-spacing: -0.04em;
+      }
+
+      .lede {
+        margin: 0;
+        color: var(--muted);
+        font: 400 16px/1.55 ui-sans-serif, system-ui, sans-serif;
+        max-width: 60ch;
+      }
+
+      .composer {
+        display: grid;
+        grid-template-columns: 1fr auto auto;
+        gap: 10px;
+        margin-top: 18px;
+      }
+
+      input,
+      button {
+        border-radius: 16px;
+        border: 1px solid var(--line);
+        font: 500 15px/1.2 ui-sans-serif, system-ui, sans-serif;
+      }
+
+      input {
+        width: 100%;
+        padding: 14px 16px;
+        background: rgba(255, 255, 255, 0.82);
+        color: var(--text);
+      }
+
+      button {
+        padding: 14px 18px;
+        cursor: pointer;
+        background: var(--panel);
+        color: var(--text);
+      }
+
+      button.primary {
+        background: linear-gradient(180deg, #0f9f92, #0d9488);
+        color: white;
+        border-color: #0b7c72;
+      }
+
+      button:disabled {
+        cursor: wait;
+        opacity: 0.65;
+      }
+
+      .status {
+        margin-top: 12px;
+        min-height: 20px;
+        color: var(--muted);
+        font: 500 13px/1.3 ui-sans-serif, system-ui, sans-serif;
+      }
+
+      .content {
+        margin-top: 18px;
+        display: grid;
+        gap: 14px;
+      }
+
+      .answer,
+      .card {
+        background: rgba(255, 253, 248, 0.9);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+      }
+
+      .answer {
+        padding: 18px;
+      }
+
+      .answer-text {
+        white-space: pre-wrap;
+        font: 400 15px/1.65 ui-sans-serif, system-ui, sans-serif;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 14px;
+      }
+
+      .card {
+        padding: 16px;
+      }
+
+      .meta {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-bottom: 12px;
+      }
+
+      .pill {
+        border: 1px solid var(--line);
+        background: var(--panel-2);
+        border-radius: 999px;
+        padding: 4px 10px;
+        color: var(--muted);
+        font: 600 11px/1 ui-sans-serif, system-ui, sans-serif;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .name {
+        font-size: 22px;
+        line-height: 1.05;
+        margin: 0 0 8px;
+      }
+
+      .description {
+        margin: 0 0 14px;
+        color: var(--muted);
+        font: 400 14px/1.55 ui-sans-serif, system-ui, sans-serif;
+      }
+
+      a {
+        color: var(--accent-2);
+        text-decoration: none;
+        font: 600 13px/1.2 ui-sans-serif, system-ui, sans-serif;
+      }
+
+      @media (max-width: 700px) {
+        .composer {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <section class="hero">
+        <div class="eyebrow">AgentNet</div>
+        <h1>Find the right agent before you build the workflow.</h1>
+        <p class="lede">
+          Search MCP servers, APIs, and connectors indexed by AgentNet, or ask for a concise workflow recommendation.
+        </p>
+        <form class="composer" id="composer">
+          <input id="query" name="query" placeholder="Book a meeting from Gmail, Slack, and Linear" />
+          <button type="submit" class="primary" data-action="ask">Ask</button>
+          <button type="button" data-action="search">Search</button>
+        </form>
+        <div class="status" id="status">Ready.</div>
+      </section>
+      <section class="content" id="content"></section>
+    </div>
+
+    <script>
+      const queryEl = document.getElementById("query");
+      const statusEl = document.getElementById("status");
+      const contentEl = document.getElementById("content");
+      const composerEl = document.getElementById("composer");
+      const buttons = Array.from(composerEl.querySelectorAll("button"));
+
+      let pendingId = 0;
+      let requestId = 0;
+      const pending = new Map();
+      let latestState = {
+        structuredContent: null,
+      };
+
+      function setBusy(isBusy, label) {
+        buttons.forEach((button) => {
+          button.disabled = isBusy;
+        });
+        statusEl.textContent = label;
+      }
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;");
+      }
+
+      function renderResults(items) {
+        if (!items.length) {
+          return '<div class="answer"><div class="answer-text">No matches yet.</div></div>';
+        }
+
+        return `
+          <div class="grid">
+            ${items
+              .map(
+                (item) => `
+                  <article class="card">
+                    <div class="meta">
+                      <span class="pill">${escapeHtml(item.transport || "tool")}</span>
+                      <span class="pill">${escapeHtml(item.score)}% match</span>
+                    </div>
+                    <h2 class="name">${escapeHtml(item.name)}</h2>
+                    <p class="description">${escapeHtml(item.description || "No description available.")}</p>
+                    ${item.url ? `<a href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">Open endpoint</a>` : ""}
+                  </article>
+                `
+              )
+              .join("")}
+          </div>
+        `;
+      }
+
+      function render() {
+        const payload = latestState.structuredContent;
+        if (!payload) {
+          contentEl.innerHTML = "";
+          return;
+        }
+
+        if (payload.query) {
+          queryEl.value = payload.query;
+        }
+
+        if (payload.view === "answer") {
+          const sources = Array.isArray(payload.sources) ? payload.sources : [];
+          contentEl.innerHTML = `
+            <article class="answer">
+              <div class="meta">
+                <span class="pill">Workflow</span>
+                ${payload.query ? `<span class="pill">${escapeHtml(payload.query)}</span>` : ""}
+              </div>
+              <div class="answer-text">${escapeHtml(payload.answer || "")}</div>
+            </article>
+            ${renderResults(sources)}
+          `;
+          return;
+        }
+
+        const results = Array.isArray(payload.results) ? payload.results : [];
+        contentEl.innerHTML = renderResults(results);
+      }
+
+      function updateFromResponse(response) {
+        if (response && response.structuredContent) {
+          latestState.structuredContent = response.structuredContent;
+          render();
+        }
+        setBusy(false, "Ready.");
+      }
+
+      function rpcRequest(method, params) {
+        return new Promise((resolve, reject) => {
+          const id = ++requestId;
+          pending.set(id, { resolve, reject });
+          window.parent.postMessage(
+            {
+              jsonrpc: "2.0",
+              id,
+              method,
+              params,
+            },
+            "*"
+          );
+        });
+      }
+
+      function rpcNotify(method, params) {
+        window.parent.postMessage(
+          {
+            jsonrpc: "2.0",
+            method,
+            params,
+          },
+          "*"
+        );
+      }
+
+      window.addEventListener(
+        "message",
+        (event) => {
+          if (event.source !== window.parent) return;
+          const message = event.data;
+          if (!message || message.jsonrpc !== "2.0") return;
+
+          if (typeof message.id === "number") {
+            const entry = pending.get(message.id);
+            if (!entry) return;
+            pending.delete(message.id);
+            if (message.error) {
+              entry.reject(message.error);
+              return;
+            }
+            entry.resolve(message.result);
+            return;
+          }
+
+          if (message.method === "ui/notifications/tool-result") {
+            updateFromResponse(message.params);
+          }
+        },
+        { passive: true }
+      );
+
+      async function initBridge() {
+        await rpcRequest("ui/initialize", {
+          appInfo: { name: "agentnet-widget", version: "0.1.0" },
+          appCapabilities: {},
+          protocolVersion: "2026-01-26",
+        });
+        rpcNotify("ui/notifications/initialized", {});
+      }
+
+      const bridgeReady = initBridge();
+
+      async function callTool(name, args) {
+        await bridgeReady;
+        const result = await rpcRequest("tools/call", {
+          name,
+          arguments: args,
+        });
+        updateFromResponse(result);
+      }
+
+      async function submit(mode) {
+        const query = queryEl.value.trim();
+        if (!query) {
+          statusEl.textContent = "Enter a query first.";
+          return;
+        }
+
+        const token = ++pendingId;
+        setBusy(true, mode === "ask" ? "Asking AgentNet…" : "Searching AgentNet…");
+
+        try {
+          await callTool(mode === "ask" ? "ask_agentnet" : "search_agents", { query });
+          if (token !== pendingId) return;
+        } catch (error) {
+          statusEl.textContent = `Request failed: ${error.message || error}`;
+          setBusy(false, statusEl.textContent);
+        }
+      }
+
+      composerEl.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        await submit("ask");
+      });
+
+      composerEl.querySelector('[data-action="search"]').addEventListener("click", async () => {
+        await submit("search");
+      });
+    </script>
+  </body>
+</html>
