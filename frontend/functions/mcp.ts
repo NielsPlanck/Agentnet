@@ -1,14 +1,13 @@
-// Cloudflare Pages Function — proxies /mcp/* to the backend on Render
+// Cloudflare Pages Function — proxies /mcp to the AgentNet backend
 export async function onRequest(context: {
   request: Request;
   env: { BACKEND_URL: string };
-  params: { path: string[] };
 }) {
   const backendUrl = context.env.BACKEND_URL || "https://backend.codiris.app";
-  const path = context.params.path?.join("/") ?? "";
   const url = new URL(context.request.url);
-  const target = `${backendUrl}/mcp${path ? "/" + path : ""}${url.search}`;
+  const target = `${backendUrl}/mcp/${url.search}`;
 
+  // Build clean headers — strip Host so fetch uses the correct target host
   const headers = new Headers(context.request.headers);
   headers.set("Origin", "https://agentnet.codiris.app");
   headers.delete("Host");

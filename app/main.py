@@ -34,7 +34,10 @@ async def lifespan(app: FastAPI):
     worker_task = asyncio.create_task(run_worker())
     log.info("Crawl worker started")
 
-    yield
+    # Start MCP session manager (required for streamable HTTP transport)
+    from app.mcp import mcp
+    async with mcp.session_manager.run():
+        yield
 
     worker_task.cancel()
     try:
@@ -77,3 +80,14 @@ async def health():
 static_dir = Path(__file__).parent / "static"
 if static_dir.exists():
     app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
+
+
+# ASGI wrapper: normalize POST /mcp (no trailing slash) → /mcp/
+# Starlette's Mount regex requires the slash; static-files catch-all at /
+# intercepts /mcp before the redirect_slashes logic can run.
+_fastapi_app = app
+
+async def app(scope, receive, send):  # noqa: F811  (shadows FastAPI app intentionally)
+    if scope.get("type") == "http" and scope.get("path") == "/mcp":
+        scope = {**scope, "path": "/mcp/", "raw_path": b"/mcp/"}
+    await _fastapi_app(scope, receive, send)
