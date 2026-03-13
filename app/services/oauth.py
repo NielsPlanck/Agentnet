@@ -14,11 +14,29 @@ from app.config import settings
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
-GMAIL_SCOPES = [
+GOOGLE_SCOPES = [
+    # Gmail
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/gmail.compose",
     "https://www.googleapis.com/auth/gmail.labels",
+    # Calendar
+    "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/calendar.events",
+    # Contacts / People
+    "https://www.googleapis.com/auth/contacts.readonly",
+    # Drive (read-only for now)
+    "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/drive.file",
+    # Sheets
+    "https://www.googleapis.com/auth/spreadsheets",
+    # User info
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
 ]
+
+# Keep backward compat alias
+GMAIL_SCOPES = GOOGLE_SCOPES
 
 _fernet: Fernet | None = None
 

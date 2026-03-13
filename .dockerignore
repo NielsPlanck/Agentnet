@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+dist/
+
+# Environment
+.env
+.env.*
+
+# Database (local)
+*.db
+*.db-shm
+*.db-wal
+
+# Frontend build artifacts (rebuilt in Docker)
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# Git
+.git/
+.gitignore
+
+# Logs
+logs/
+*.log
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+.cursor/
+
+# Docker
+docker-compose.yml
+Dockerfile
+.dockerignore
+
+# Deployment
+.do/
+railway.toml
+
+# Claude
+.claude/

@@ -57,23 +57,101 @@ export interface AskStreamWebSources {
   sources: WebSource[];
 }
 
-type SSEMessage = AskStreamToken | AskStreamSources | AskStreamUsedTool | AskStreamWebSources;
+export interface UrlSource {
+  url: string;
+  title: string;
+  status: "ok" | "error";
+  error?: string;
+}
+
+export interface AskStreamUrlSources {
+  type: "url_sources";
+  sources: UrlSource[];
+}
+
+// ── Job Agent SSE Events ─────────────────────────────────────────────
+
+export interface AgentScreenshot {
+  type: "browser_screenshot";
+  image: string;   // base64 JPEG
+  url: string;
+  action: string;
+}
+
+export interface AgentStatus {
+  type: "agent_status";
+  phase: string;    // starting | navigating | acting | done | error
+  message: string;
+  step?: number;
+  action?: string;
+  jobs_found?: number;
+}
+
+export interface AgentFoundJob {
+  type: "agent_found_job";
+  title: string;
+  company: string;
+  url: string;
+  description?: string;
+}
+
+export interface AgentAsk {
+  type: "agent_ask";
+  question: string;
+  reason: string;
+}
+
+export interface AgentError {
+  type: "agent_error";
+  message: string;
+}
+
+type SSEMessage =
+  | AskStreamToken
+  | AskStreamSources
+  | AskStreamUsedTool
+  | AskStreamWebSources
+  | AskStreamUrlSources
+  | AgentScreenshot
+  | AgentStatus
+  | AgentFoundJob
+  | AgentAsk
+  | AgentError;
 
 export interface ImagePayload {
   base64: string;
   mime_type: string;
 }
 
+export interface DocumentPayload {
+  base64: string;
+  mime_type: string;
+  filename: string;
+  text_content: string;
+}
+
+export interface SkillPayload {
+  id: string;
+  name: string;
+  instructions: string;
+}
+
 export async function* streamAsk(
   query: string,
   history: ChatMessage[] = [],
   images?: ImagePayload[],
-  mode: "agentnet" | "web" | "both" = "agentnet"
+  mode: "agentnet" | "web" | "both" = "agentnet",
+  documents?: DocumentPayload[],
+  enabledSkills?: SkillPayload[],
 ): AsyncGenerator<SSEMessage, void, unknown> {
+  const body: Record<string, unknown> = { query, history, images, documents, mode };
+  if (enabledSkills && enabledSkills.length > 0) {
+    body.enabled_skills = enabledSkills;
+  }
   const res = await fetch("/v1/ask/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, history, images, mode }),
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -140,4 +218,113 @@ export async function fetchStats(): Promise<ToolStats> {
     actions: tools.length * 3,
     categories: caps.length,
   };
+}
+
+
+// ── Job Agent API ────────────────────────────────────────────────────
+
+export type JobAgentSSE = AgentScreenshot | AgentStatus | AgentFoundJob | AgentAsk | AgentError;
+
+export interface StartAgentParams {
+  board: string;
+  search_query: string;
+  location: string;
+  job_type?: string;
+  max_results?: number;
+  url?: string;  // optional: direct URL to a specific job board page
+}
+
+export async function* streamJobAgent(
+  params: StartAgentParams,
+): AsyncGenerator<JobAgentSSE, void, unknown> {
+  const res = await fetch("/v1/jobs/agent/start", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+
+  if (!res.ok) {
+    const err = await res.text().catch(() => "Unknown error");
+    throw new Error(`Job agent error: ${err}`);
+  }
+
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop()!;
+
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const payload = line.slice(6);
+      if (payload === "[DONE]") return;
+
+      try {
+        yield JSON.parse(payload) as JobAgentSSE;
+      } catch {
+        // skip malformed
+      }
+    }
+  }
+}
+
+export interface JobProfileData {
+  full_name: string;
+  email: string;
+  phone: string;
+  location: string;
+  linkedin_url: string;
+  portfolio_url: string;
+  target_roles: string[];
+  target_locations: string[];
+  salary_range: string;
+  job_type: string;
+  additional_info: string;
+}
+
+export async function saveJobProfile(data: JobProfileData): Promise<void> {
+  const res = await fetch("/v1/jobs/profile", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error("Failed to save profile");
+}
+
+export async function uploadJobCV(base64: string, filename: string, mimeType: string, textContent: string = ""): Promise<void> {
+  const res = await fetch("/v1/jobs/profile/cv", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ base64, filename, mime_type: mimeType, text_content: textContent }),
+  });
+  if (!res.ok) throw new Error("Failed to upload CV");
+}
+
+export async function getJobProfile(): Promise<{ exists: boolean; [key: string]: unknown }> {
+  const res = await fetch("/v1/jobs/profile");
+  if (!res.ok) throw new Error("Failed to get profile");
+  return res.json();
+}
+
+export interface JobApplicationItem {
+  id: string;
+  job_title: string;
+  company: string;
+  job_url: string;
+  board: string;
+  status: string;
+  applied_at: string | null;
+  created_at: string;
+}
+
+export async function getJobApplications(): Promise<{ applications: JobApplicationItem[] }> {
+  const res = await fetch("/v1/jobs/applications");
+  if (!res.ok) throw new Error("Failed to get applications");
+  return res.json();
 }

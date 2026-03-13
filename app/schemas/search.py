@@ -51,13 +51,30 @@ class ImageInput(BaseModel):
     mime_type: str = "image/png"
 
 
+class DocumentInput(BaseModel):
+    """Uploaded document (PDF, DOCX, TXT, CSV, etc.)."""
+    base64: str
+    mime_type: str
+    filename: str = ""
+    text_content: str = ""  # Pre-extracted text (for text files parsed on frontend)
+
+
+class SkillInstruction(BaseModel):
+    """Enabled custom skill's instructions to inject into system prompt."""
+    id: str
+    name: str
+    instructions: str
+
+
 class AskRequest(BaseModel):
     query: str
     category: str | None = None
     transport: str | None = None
     history: list[ChatMessage] = []
     images: list[ImageInput] = []
+    documents: list[DocumentInput] = []
     mode: str = "agentnet"  # "agentnet" | "web" | "both"
+    enabled_skills: list[SkillInstruction] = []
 
 
 class AskResponse(BaseModel):

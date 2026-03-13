@@ -29,6 +29,10 @@ COPY app/ ./app/
 # Copy built frontend into backend static dir
 COPY --from=frontend-builder /frontend/out/ ./app/static/
 
+# Copy entrypoint
+COPY entrypoint.sh ./
+RUN chmod +x entrypoint.sh
+
 # Persistent data directory for SQLite
 RUN mkdir -p /data
 
@@ -37,4 +41,7 @@ ENV AGENTNET_DATABASE_URL="sqlite+aiosqlite:////data/agentnet.db"
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
+
+ENTRYPOINT ["./entrypoint.sh"]

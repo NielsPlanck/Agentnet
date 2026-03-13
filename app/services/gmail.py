@@ -71,3 +71,43 @@ async def send_email(token: str, to: str, subject: str, body: str) -> dict:
         resp.raise_for_status()
         data = resp.json()
         return {"id": data["id"], "status": "sent"}
+
+
+async def create_draft(token: str, to: str, subject: str, body: str) -> dict:
+    """Create a draft email in Gmail.
+
+    Returns {"id": draft_id, "message_id": msg_id, "status": "draft_created"}
+    """
+    msg = MIMEText(body)
+    msg["to"] = to
+    msg["subject"] = subject
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{GMAIL_BASE}/drafts",
+            headers=_headers(token),
+            json={"message": {"raw": raw}},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return {
+            "id": data["id"],
+            "message_id": data.get("message", {}).get("id", ""),
+            "status": "draft_created",
+        }
+
+
+async def get_profile(token: str) -> dict:
+    """Get the authenticated user's Gmail profile (email address)."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"{GMAIL_BASE}/profile",
+            headers=_headers(token),
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return {
+            "email": data.get("emailAddress", ""),
+            "messages_total": data.get("messagesTotal", 0),
+        }

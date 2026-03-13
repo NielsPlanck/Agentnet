@@ -12,6 +12,10 @@ const nextConfig: NextConfig = isDev
             source: "/v1/:path*",
             destination: "http://localhost:8000/v1/:path*",
           },
+          {
+            source: "/health",
+            destination: "http://localhost:8000/health",
+          },
         ];
       },
     }

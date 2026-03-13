@@ -1,14 +1,17 @@
 import json
 import logging
+import uuid
+from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import get_db
+from app.api.deps import get_current_user_optional, get_db
+from app.models.user import User
 from app.config import settings
 from app.models.capability import Capability
 from app.models.registered_site import RegisteredSite
@@ -23,13 +26,34 @@ from app.schemas.capability import CapabilityOut
 from app.schemas.search import (
     AskRequest,
     AskResponse,
+    DocumentInput,
     SearchRequest,
     SearchResponse,
     SearchResultItem,
 )
 from app.schemas.tool import ActionOut, ToolDetailOut, ToolOut
+from app.services.documents import extract_text, is_gemini_native, is_text_file
+from app.services.enrichment import enrich_table
+from app.services.calendar import (
+    create_event,
+    find_free_slots,
+    list_calendars,
+    list_events,
+)
+from app.services.contacts import get_user_profile, list_contacts
+from app.services.drive import get_file_metadata, list_files, search_files
+from app.services.gmail import create_draft
 from app.services.llm import ask_agentnet, ask_agentnet_stream, ask_web_stream
+from app.services.oauth import decrypt_token, refresh_google_token
+from app.services.sheets import (
+    append_rows,
+    create_spreadsheet,
+    get_spreadsheet,
+    read_range,
+    write_range,
+)
 from app.services.search import search_by_intent
+from app.services.url_fetcher import extract_urls, fetch_urls_content
 
 log = logging.getLogger(__name__)
 
@@ -150,10 +174,14 @@ async def _extract_search_intent(query: str, history: list) -> str:
     return query
 
 
-async def _collect_web_sources(query: str, history: list, images) -> list[dict]:
+async def _collect_web_sources(
+    query: str, history: list, images, doc_context: str = "", binary_docs=None,
+) -> list[dict]:
     """Run web search and collect all sources (for parallel use in 'both' mode)."""
     web_sources: list[dict] = []
-    async for _token, sources in ask_web_stream(query, history, images):
+    async for _token, sources in ask_web_stream(
+        query, history, images, doc_context=doc_context, binary_docs=binary_docs,
+    ):
         if sources:
             web_sources = sources
     return web_sources
@@ -173,13 +201,85 @@ async def _search_for_ask(
     return search_resp.results
 
 
+async def _fetch_url_context(query: str) -> tuple[str, list[dict]]:
+    """Detect URLs in query, fetch content, return (context_string, metadata)."""
+    urls = extract_urls(query)
+    if not urls:
+        return "", []
+
+    results = await fetch_urls_content(urls)
+    context_parts: list[str] = []
+    metadata: list[dict] = []
+    for r in results:
+        if r["content"]:
+            context_parts.append(f"## Content from {r['url']}\n\n{r['content']}")
+            metadata.append({"url": r["url"], "title": r["title"], "status": "ok"})
+        elif r["error"]:
+            metadata.append({"url": r["url"], "title": r["url"], "status": "error", "error": r["error"]})
+
+    url_context = "\n\n---\n\n".join(context_parts) if context_parts else ""
+    return url_context, metadata
+
+
+async def _process_documents(
+    documents: list[DocumentInput],
+) -> tuple[str, list[DocumentInput]]:
+    """Process uploaded documents.
+
+    Returns (doc_text_context, binary_docs_for_gemini).
+    - doc_text_context: extracted text to include in the prompt
+    - binary_docs_for_gemini: PDF/image docs to send as binary parts
+    """
+    doc_context_parts: list[str] = []
+    binary_docs: list[DocumentInput] = []
+
+    for doc in documents:
+        fname = doc.filename or "document"
+
+        # If frontend already extracted text (for text files)
+        if doc.text_content:
+            doc_context_parts.append(f"## {fname}\n{doc.text_content[:15000]}")
+            continue
+
+        # PDF — send as binary to Gemini (it handles PDF natively)
+        # Also try to extract text for richer context
+        if doc.mime_type == "application/pdf":
+            text = await extract_text(doc.base64, doc.mime_type, doc.filename)
+            if text.strip():
+                doc_context_parts.append(f"## {fname}\n{text[:15000]}")
+            else:
+                binary_docs.append(doc)
+            continue
+
+        # DOCX, TXT, CSV, etc. — extract text
+        if is_text_file(doc.mime_type, doc.filename):
+            try:
+                import base64 as b64
+                raw = b64.b64decode(doc.base64)
+                text = raw.decode("utf-8", errors="replace")
+                doc_context_parts.append(f"## {fname}\n{text[:15000]}")
+            except Exception:
+                pass
+            continue
+
+        # Try generic text extraction
+        text = await extract_text(doc.base64, doc.mime_type, doc.filename)
+        if text.strip():
+            doc_context_parts.append(f"## {fname}\n{text[:15000]}")
+        elif is_gemini_native(doc.mime_type):
+            binary_docs.append(doc)
+
+    doc_context = "\n\n---\n\n".join(doc_context_parts) if doc_context_parts else ""
+    return doc_context, binary_docs
+
+
 @router.post("/ask", response_model=AskResponse)
-async def ask(req: AskRequest, db: AsyncSession = Depends(get_db)):
+async def ask(req: AskRequest, db: AsyncSession = Depends(get_db), user: User | None = Depends(get_current_user_optional)):
     sources = await _search_for_ask(db, req)
     answer = await ask_agentnet(req.query, sources, req.history, req.images or None)
 
     # Store conversation
-    conv = await _get_or_create_conversation(db, req)
+    conv = await _get_or_create_conversation(db, req, user)
     seq = len(req.history) + 1
     db.add(Message(
         conversation_id=conv.id, seq=seq, role="user",
@@ -196,12 +296,155 @@ async def ask(req: AskRequest, db: AsyncSession = Depends(get_db)):
     return AskResponse(query=req.query, answer=answer, sources=sources)
 
 
+async def _maybe_gather_apple_context(query: str) -> str:
+    """If the user's query mentions calendar/reminders/messages, fetch Apple data as context."""
+    q = query.lower()
+    keywords_calendar = ["calendar", "schedule", "meeting", "event", "today", "tomorrow", "agenda", "what's on", "whats on", "busy", "free time", "availability"]
+    keywords_reminder = ["reminder", "task", "todo", "to-do", "to do"]
+    keywords_message = ["message", "imessage", "text", "sms", "iphone", "texts"]
+    keywords_notes = ["note", "notes"]
+
+    need_calendar = any(kw in q for kw in keywords_calendar)
+    need_reminders = any(kw in q for kw in keywords_reminder)
+    need_messages = any(kw in q for kw in keywords_message)
+    need_notes = any(kw in q for kw in keywords_notes)
+
+    if not (need_calendar or need_reminders or need_messages or need_notes):
+        return ""
+
+    parts: list[str] = []
+    from app.services.apple import (
+        apple_calendar_list_events,
+        apple_notes_list,
+        apple_reminders_list,
+        imessage_recent,
+    )
+
+    now_str = datetime.now().strftime("%A, %B %d, %Y at %I:%M %p")
+    parts.append(f"## Apple Context (current time: {now_str})\n")
+
+    if need_calendar:
+        try:
+            events = await apple_calendar_list_events(days_ahead=3)
+            if events:
+                parts.append("### Upcoming Calendar Events")
+                for e in events[:12]:
+                    line = f"- **{e['title']}** | {e['start']} → {e['end']}"
+                    if e.get("location"):
+                        line += f" | Location: {e['location']}"
+                    if e.get("calendar"):
+                        line += f" | Calendar: {e['calendar']}"
+                    parts.append(line)
+            else:
+                parts.append("### Calendar: No upcoming events in the next 3 days.")
+            parts.append("")
+        except Exception as e:
+            log.warning("Failed to fetch Apple calendar: %s", e)
+
+    if need_reminders:
+        try:
+            reminders = await apple_reminders_list()
+            if reminders:
+                parts.append("### Pending Reminders")
+                for r in reminders[:12]:
+                    due = f" (due: {r['due_date']})" if r.get("due_date") else ""
+                    parts.append(f"- {r['name']}{due}")
+            else:
+                parts.append("### Reminders: No pending reminders.")
+            parts.append("")
+        except Exception as e:
+            log.warning("Failed to fetch Apple reminders: %s", e)
+
+    if need_messages:
+        try:
+            messages = await imessage_recent(hours=24, limit=20)
+            if messages:
+                parts.append("### Recent Messages (last 24h)")
+                for m in messages[:15]:
+                    sender = "Me" if m["from"] == "me" else m["from"]
+                    parts.append(f"- [{m['time']}] {sender}: {m['text'][:120]}")
+            else:
+                parts.append("### Messages: No recent messages.")
+            parts.append("")
+        except Exception as e:
+            log.warning("Failed to fetch iMessages: %s", e)
+
+    if need_notes:
+        try:
+            notes = await apple_notes_list(limit=8)
+            if notes:
+                parts.append("### Recent Notes")
+                for n in notes[:8]:
+                    parts.append(f"- **{n['title']}** (modified: {n['modified']})")
+            parts.append("")
+        except Exception as e:
+            log.warning("Failed to fetch Apple notes: %s", e)
+
+    return "\n".join(parts)
+
+
 @router.post("/ask/stream")
-async def ask_stream(req: AskRequest, db: AsyncSession = Depends(get_db)):
+async def ask_stream(req: AskRequest, db: AsyncSession = Depends(get_db), user: User | None = Depends(get_current_user_optional)):
+    # ── Fetch URL content (all modes) ─────────────────────────────
+    url_context, url_metadata = await _fetch_url_context(req.query)
+
+    # ── Process uploaded documents ────────────────────────────────
+    doc_context = ""
+    binary_docs = None
+    if req.documents:
+        doc_context, binary_docs = await _process_documents(req.documents)
+        binary_docs = binary_docs or None
+
+    # ── Inject persistent memories ─────────────────────────────────
+    if user:
+        try:
+            from app.services.memory import inject_memories
+            memory_context = await inject_memories(user.id, req.query)
+            if memory_context:
+                doc_context = (doc_context + "\n\n" + memory_context) if doc_context else memory_context
+        except Exception as _mem_err:
+            log.warning("Failed to inject memories: %s", _mem_err)
+
+    # ── Inject email digest when relevant ──────────────────────────
+    email_keywords = ["email", "inbox", "gmail", "mail", "unread", "urgent email", "messages"]
+    if user and any(kw in req.query.lower() for kw in email_keywords):
+        try:
+            from app.services.email_intel import get_latest_digest
+            digest = await get_latest_digest(user.id)
+            if digest:
+                email_ctx = f"LATEST INBOX DIGEST ({digest['emails_processed']} emails, {digest['urgent_count']} urgent):\n{digest['summary_text']}"
+                doc_context = (doc_context + "\n\n" + email_ctx) if doc_context else email_ctx
+        except Exception as _email_err:
+            log.warning("Failed to inject email digest: %s", _email_err)
+
+    # ── Inject meeting debriefs when relevant ───────────────────────
+    meeting_keywords = ["meeting", "debrief", "follow-up", "follow up", "action items", "post-meeting"]
+    if user and any(kw in req.query.lower() for kw in meeting_keywords):
+        try:
+            from app.services.meeting_intel import list_debriefs
+            debriefs = await list_debriefs(user.id, limit=5)
+            if debriefs:
+                meeting_ctx = "RECENT MEETING DEBRIEFS:\n"
+                for d in debriefs[:3]:
+                    meeting_ctx += f"- {d['event_title']} ({d['event_start'] or 'unknown time'}): {len(d['action_items'])} action items\n"
+                doc_context = (doc_context + "\n\n" + meeting_ctx) if doc_context else meeting_ctx
+        except Exception as _meet_err:
+            log.warning("Failed to inject meeting context: %s", _meet_err)
+
+    # ── Inject Apple context when relevant ─────────────────────────
+    apple_context = await _maybe_gather_apple_context(req.query)
+    if apple_context:
+        doc_context = (doc_context + "\n\n" + apple_context) if doc_context else apple_context
+
     # ── Web-only mode ──────────────────────────────────────────────
     if req.mode == "web":
         async def web_event_generator():
-            async for token, web_sources in ask_web_stream(req.query, req.history, req.images or None):
+            if url_metadata:
+                yield f"data: {json.dumps({'type': 'url_sources', 'sources': url_metadata})}\n\n"
+            async for token, web_sources in ask_web_stream(
+                req.query, req.history, req.images or None,
+                url_context=url_context, doc_context=doc_context, binary_docs=binary_docs,
+            ):
                 if token:
                     yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
                 if web_sources:
@@ -216,14 +459,24 @@ async def ask_stream(req: AskRequest, db: AsyncSession = Depends(get_db)):
         # Kick off web search concurrently
         import asyncio as _asyncio
         web_task = _asyncio.create_task(
-            _collect_web_sources(req.query, req.history, req.images or None)
+            _collect_web_sources(
+                req.query, req.history, req.images or None,
+                doc_context=doc_context, binary_docs=binary_docs,
+            )
         )
 
         async def both_event_generator():
+            if url_metadata:
+                yield f"data: {json.dumps({'type': 'url_sources', 'sources': url_metadata})}\n\n"
             import re as _re
             tag_done = False
             prefix_buf = ""
-            async for token in ask_agentnet_stream(req.query, sources, req.history, req.images or None):
+            skill_instructions = [(s.name, s.instructions) for s in req.enabled_skills if s.instructions.strip()] or None
+            async for token in ask_agentnet_stream(
+                req.query, sources, req.history, req.images or None,
+                url_context=url_context, doc_context=doc_context, binary_docs=binary_docs,
+                skill_instructions=skill_instructions,
+            ):
                 if not tag_done:
                     prefix_buf += token
                     if "]" in prefix_buf or len(prefix_buf) > 20:
@@ -263,7 +516,7 @@ async def ask_stream(req: AskRequest, db: AsyncSession = Depends(get_db)):
     sources = await _search_for_ask(db, req)
 
     # Create conversation record before streaming
-    conv = await _get_or_create_conversation(db, req)
+    conv = await _get_or_create_conversation(db, req, user)
     seq = len(req.history) + 1
     db.add(Message(
         conversation_id=conv.id, seq=seq, role="user",
@@ -276,11 +529,18 @@ async def ask_stream(req: AskRequest, db: AsyncSession = Depends(get_db)):
     collected_agent: list[str] = []
 
     async def event_generator():
+        if url_metadata:
+            yield f"data: {json.dumps({'type': 'url_sources', 'sources': url_metadata})}\n\n"
         import re as _re
         tag_done = False
         prefix_buf = ""
 
-        async for token in ask_agentnet_stream(req.query, sources, req.history, req.images or None):
+        skill_instructions2 = [(s.name, s.instructions) for s in req.enabled_skills if s.instructions.strip()] or None
+        async for token in ask_agentnet_stream(
+            req.query, sources, req.history, req.images or None,
+            url_context=url_context, doc_context=doc_context, binary_docs=binary_docs,
+            skill_instructions=skill_instructions2,
+        ):
             if not tag_done:
                 prefix_buf += token
                 # Wait until we have the closing ] or enough chars to know there's no tag
@@ -326,7 +586,7 @@ async def ask_stream(req: AskRequest, db: AsyncSession = Depends(get_db)):
     )
 
 
-async def _get_or_create_conversation(db: AsyncSession, req: AskRequest) -> Conversation:
+async def _get_or_create_conversation(db: AsyncSession, req: AskRequest, user: User | None = None) -> Conversation:
     """Reuse conversation if there's history, otherwise create new."""
     if req.history:
         # Find existing conversation by matching first user message
@@ -342,9 +602,18 @@ async def _get_or_create_conversation(db: AsyncSession, req: AskRequest) -> Conv
             result = await db.execute(stmt)
             conv = result.scalar_one_or_none()
             if conv:
+                # Backfill user_id if missing
+                if user and not conv.user_id:
+                    conv.user_id = user.id
                 return conv
 
-    conv = Conversation()
+    # Auto-title from the query (first 80 chars)
+    title = req.query[:80].strip() if req.query else None
+
+    conv = Conversation(
+        user_id=user.id if user else None,
+        title=title,
+    )
     db.add(conv)
     await db.flush()
     return conv
@@ -711,3 +980,572 @@ async def list_suggestions(
         }
         for s in suggestions
     ]
+
+
+# ── Temporary CSV storage (for Google Sheets export) ────────────
+
+_temp_csvs: dict[str, dict] = {}
+_TEMP_CSV_TTL = timedelta(minutes=10)
+
+
+def _cleanup_temp_csvs():
+    """Remove expired temp CSV entries."""
+    cutoff = datetime.utcnow() - _TEMP_CSV_TTL
+    expired = [k for k, v in _temp_csvs.items() if v["created"] < cutoff]
+    for k in expired:
+        del _temp_csvs[k]
+
+
+class TempCsvRequest(BaseModel):
+    csv: str
+
+
+@router.post("/temp-csv")
+async def create_temp_csv(body: TempCsvRequest, request: Request):
+    """Store CSV data temporarily and return a URL to access it."""
+    _cleanup_temp_csvs()
+    csv_id = uuid.uuid4().hex[:10]
+    _temp_csvs[csv_id] = {"data": body.csv, "created": datetime.utcnow()}
+
+    # Build public URL from request
+    scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("host", "localhost:8000")
+    url = f"{scheme}://{host}/v1/temp-csv/{csv_id}"
+    return {"id": csv_id, "url": url}
+
+
+@router.get("/temp-csv/{csv_id}")
+async def get_temp_csv(csv_id: str):
+    """Serve a temporarily stored CSV file."""
+    entry = _temp_csvs.get(csv_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="CSV not found or expired")
+    return Response(
+        content=entry["data"],
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'inline; filename="data-{csv_id}.csv"',
+            "Access-Control-Allow-Origin": "*",
+        },
+    )
+
+
+# ── Table Enrichment (real data via Hunter.io/Tavily) ────────────
+
+class EnrichTableRequest(BaseModel):
+    columns: list[str]
+    rows: list[list]
+    add_columns: list[str]
+
+
+@router.post("/enrich-table")
+async def enrich_table_endpoint(body: EnrichTableRequest):
+    """Enrich table rows with real data from Hunter.io / Tavily web search."""
+    result = await enrich_table(body.columns, body.rows, body.add_columns)
+    return result
+
+
+# ── Gmail Drafts ─────────────────────────────────────────────────
+
+class GmailDraftRequest(BaseModel):
+    to: str
+    subject: str
+    body: str
+
+
+@router.post("/gmail/drafts")
+async def create_gmail_draft(
+    body: GmailDraftRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a draft email in the user's Gmail account."""
+    from app.api.session_utils import get_or_create_session
+    from app.models.user import OAuthConnection
+
+    session = await get_or_create_session(request, None, db)
+    if not session:
+        raise HTTPException(status_code=401, detail="No session found")
+
+    # Find Gmail OAuth connection for this session
+    result = await db.execute(
+        select(OAuthConnection).where(
+            OAuthConnection.session_id == session.id,
+            OAuthConnection.provider == "google",
+        )
+    )
+    conn = result.scalar_one_or_none()
+    if not conn:
+        raise HTTPException(
+            status_code=401,
+            detail="Gmail not connected. Please connect your Gmail account first.",
+        )
+
+    try:
+        token = decrypt_token(conn.access_token_enc)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Failed to decrypt token")
+
+    try:
+        draft = await create_draft(token, body.to, body.subject, body.body)
+        return {**draft, "gmail_url": "https://mail.google.com/mail/u/0/#drafts"}
+    except Exception:
+        log.exception("Failed to create Gmail draft")
+        raise HTTPException(status_code=500, detail="Failed to create Gmail draft")
+
+
+# ── Document Parsing ──────────────────────────────────────────────
+
+class ParseDocumentRequest(BaseModel):
+    base64: str
+    mime_type: str
+    filename: str = ""
+
+
+@router.post("/parse-document")
+async def parse_document(body: ParseDocumentRequest):
+    """Extract text from an uploaded document (PDF, DOCX, TXT, etc.)."""
+    text = await extract_text(body.base64, body.mime_type, body.filename)
+    return {"text": text, "filename": body.filename}
+
+
+# ── Shared: Google OAuth token helper ─────────────────────────────
+
+async def _get_google_token(request: Request, db: AsyncSession) -> str:
+    """Extract a valid Google access token from the current session.
+
+    Raises HTTPException 401 if not connected or token is invalid.
+    Automatically refreshes the token if it's expired.
+    """
+    from app.api.session_utils import get_or_create_session
+    from app.models.user import OAuthConnection
+
+    session = await get_or_create_session(request, Response(), db)
+    if not session:
+        raise HTTPException(status_code=401, detail="No session found")
+
+    result = await db.execute(
+        select(OAuthConnection).where(
+            OAuthConnection.session_id == session.id,
+            OAuthConnection.provider == "google",
+        )
+    )
+    conn = result.scalar_one_or_none()
+    if not conn:
+        raise HTTPException(
+            status_code=401,
+            detail="Google account not connected. Please connect first.",
+        )
+
+    # Check if token is expired and try to refresh
+    from datetime import datetime, timezone, timedelta
+    from app.services.oauth import encrypt_token
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if conn.token_expires_at and conn.token_expires_at < now:
+        if not conn.refresh_token_enc:
+            raise HTTPException(
+                status_code=401,
+                detail="Token expired and no refresh token available. Please reconnect.",
+            )
+        try:
+            refresh_tok = decrypt_token(conn.refresh_token_enc)
+            new_tokens = await refresh_google_token(refresh_tok)
+            conn.access_token_enc = encrypt_token(new_tokens["access_token"])
+            conn.token_expires_at = now + timedelta(seconds=new_tokens.get("expires_in", 3600))
+            await db.commit()
+            return new_tokens["access_token"]
+        except Exception:
+            log.exception("Failed to refresh Google token")
+            raise HTTPException(
+                status_code=401,
+                detail="Failed to refresh token. Please reconnect your Google account.",
+            )
+
+    try:
+        return decrypt_token(conn.access_token_enc)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Failed to decrypt token")
+
+
+# ── Google Calendar ───────────────────────────────────────────────
+
+@router.get("/calendar/calendars")
+async def api_list_calendars(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """List all calendars for the connected Google account."""
+    token = await _get_google_token(request, db)
+    return await list_calendars(token)
+
+
+@router.get("/calendar/events")
+async def api_list_events(
+    request: Request,
+    calendar_id: str = Query("primary"),
+    days_ahead: int = Query(7, ge=1, le=90),
+    max_results: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    """List upcoming events from a calendar."""
+    token = await _get_google_token(request, db)
+    return await list_events(token, calendar_id, days_ahead, max_results)
+
+
+class CreateEventRequest(BaseModel):
+    summary: str
+    start: str
+    end: str
+    description: str = ""
+    location: str = ""
+    attendees: list[str] | None = None
+    calendar_id: str = "primary"
+    send_notifications: bool = True
+
+
+@router.post("/calendar/events")
+async def api_create_event(
+    body: CreateEventRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new calendar event."""
+    token = await _get_google_token(request, db)
+    return await create_event(
+        token,
+        summary=body.summary,
+        start=body.start,
+        end=body.end,
+        description=body.description,
+        location=body.location,
+        attendees=body.attendees,
+        calendar_id=body.calendar_id,
+        send_notifications=body.send_notifications,
+    )
+
+
+@router.get("/calendar/free-busy")
+async def api_free_busy(
+    request: Request,
+    days_ahead: int = Query(7, ge=1, le=30),
+    calendar_id: str = Query("primary"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get free/busy information for a calendar."""
+    token = await _get_google_token(request, db)
+    return await find_free_slots(token, days_ahead, calendar_id)
+
+
+# ── Google Contacts ───────────────────────────────────────────────
+
+@router.get("/contacts")
+async def api_list_contacts(
+    request: Request,
+    query: str | None = Query(None),
+    page_size: int = Query(50, ge=1, le=100),
+    page_token: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """List or search contacts from Google Contacts."""
+    token = await _get_google_token(request, db)
+    return await list_contacts(token, page_size, page_token, query)
+
+
+@router.get("/contacts/me")
+async def api_user_profile(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get the authenticated user's own profile info."""
+    token = await _get_google_token(request, db)
+    return await get_user_profile(token)
+
+
+# ── Google Drive ──────────────────────────────────────────────────
+
+@router.get("/drive/files")
+async def api_list_drive_files(
+    request: Request,
+    query: str | None = Query(None),
+    mime_type: str | None = Query(None),
+    page_size: int = Query(20, ge=1, le=100),
+    page_token: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """List files in Google Drive. Optionally filter by name or mime type."""
+    token = await _get_google_token(request, db)
+    return await list_files(token, query, page_size, page_token, mime_type)
+
+
+@router.get("/drive/files/{file_id}")
+async def api_get_drive_file(
+    file_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get metadata for a single Drive file."""
+    token = await _get_google_token(request, db)
+    return await get_file_metadata(token, file_id)
+
+
+@router.get("/drive/search")
+async def api_search_drive(
+    request: Request,
+    query: str = Query(...),
+    page_size: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    """Full-text search across Google Drive files."""
+    token = await _get_google_token(request, db)
+    return await search_files(token, query, page_size)
+
+
+# ── Google Sheets ─────────────────────────────────────────────────
+
+@router.get("/sheets/{spreadsheet_id}")
+async def api_get_spreadsheet(
+    spreadsheet_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get spreadsheet metadata (title, sheet list)."""
+    token = await _get_google_token(request, db)
+    return await get_spreadsheet(token, spreadsheet_id)
+
+
+@router.get("/sheets/{spreadsheet_id}/values/{range_notation:path}")
+async def api_read_sheet_range(
+    spreadsheet_id: str,
+    range_notation: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Read values from a spreadsheet range (e.g. Sheet1!A1:Z100)."""
+    token = await _get_google_token(request, db)
+    return await read_range(token, spreadsheet_id, range_notation)
+
+
+class WriteSheetRequest(BaseModel):
+    range: str
+    values: list[list]
+
+
+@router.put("/sheets/{spreadsheet_id}/values")
+async def api_write_sheet_range(
+    spreadsheet_id: str,
+    body: WriteSheetRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Write values to a spreadsheet range."""
+    token = await _get_google_token(request, db)
+    return await write_range(token, spreadsheet_id, body.range, body.values)
+
+
+class AppendSheetRequest(BaseModel):
+    range: str
+    values: list[list]
+
+
+@router.post("/sheets/{spreadsheet_id}/append")
+async def api_append_sheet_rows(
+    spreadsheet_id: str,
+    body: AppendSheetRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Append rows to a spreadsheet."""
+    token = await _get_google_token(request, db)
+    return await append_rows(token, spreadsheet_id, body.range, body.values)
+
+
+class CreateSpreadsheetRequest(BaseModel):
+    title: str
+    sheet_titles: list[str] | None = None
+
+
+@router.post("/sheets")
+async def api_create_spreadsheet(
+    body: CreateSpreadsheetRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new Google Spreadsheet."""
+    token = await _get_google_token(request, db)
+    return await create_spreadsheet(token, body.title, body.sheet_titles)
+
+
+# ── Person Intelligence ──────────────────────────────────────────
+
+class PersonResearchRequest(BaseModel):
+    name: str
+    company: str = ""
+    role: str = ""
+    topics: list[str] | None = None
+
+
+@router.post("/person/research")
+async def api_research_person(body: PersonResearchRequest):
+    """Research a person's recent activities and generate intel."""
+    from app.services.person_intel import research_person
+    result = await research_person(body.name, body.company, body.role, body.topics)
+    return result
+
+
+# ── Follow-Up Sequences ──────────────────────────────────────────
+
+class FollowUpStepInput(BaseModel):
+    step_order: int
+    step_type: str  # email, linkedin, reminder, call
+    delay_days: int = 0
+    subject: str = ""
+    body: str = ""
+
+
+class CreateFollowUpRequest(BaseModel):
+    name: str
+    email: str = ""
+    company: str = ""
+    title: str = ""
+    linkedin: str = ""
+    notes: str = ""
+    intel_summary: str = ""
+    steps: list[FollowUpStepInput] = []
+
+
+@router.post("/followups")
+async def api_create_followup(
+    body: CreateFollowUpRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a tracked person with a follow-up sequence."""
+    from app.api.session_utils import get_or_create_session
+    from app.models.followup import FollowUpStep, TrackedPerson
+
+    session = await get_or_create_session(request, Response(), db)
+    person = TrackedPerson(
+        session_id=session.id,
+        name=body.name,
+        email=body.email,
+        company=body.company,
+        title=body.title,
+        linkedin=body.linkedin,
+        notes=body.notes,
+        intel_summary=body.intel_summary,
+    )
+    db.add(person)
+    await db.flush()
+
+    # Add steps with scheduled dates
+    from datetime import timedelta
+    prev_date = datetime.utcnow()
+    for s in body.steps:
+        scheduled = prev_date + timedelta(days=s.delay_days)
+        step = FollowUpStep(
+            person_id=person.id,
+            step_order=s.step_order,
+            step_type=s.step_type,
+            delay_days=s.delay_days,
+            subject=s.subject,
+            body=s.body,
+            status="pending",
+            scheduled_at=scheduled,
+        )
+        db.add(step)
+        prev_date = scheduled
+
+    await db.commit()
+    return {
+        "id": person.id,
+        "name": person.name,
+        "company": person.company,
+        "steps_count": len(body.steps),
+        "status": "created",
+    }
+
+
+@router.get("/followups")
+async def api_list_followups(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """List all tracked people + follow-up sequences for the current session."""
+    from app.api.session_utils import get_or_create_session
+    from app.models.followup import FollowUpStep, TrackedPerson
+
+    session = await get_or_create_session(request, Response(), db)
+    result = await db.execute(
+        select(TrackedPerson)
+        .where(TrackedPerson.session_id == session.id)
+        .order_by(TrackedPerson.created_at.desc())
+    )
+    people = result.scalars().all()
+
+    output = []
+    for p in people:
+        # Load steps
+        steps_result = await db.execute(
+            select(FollowUpStep)
+            .where(FollowUpStep.person_id == p.id)
+            .order_by(FollowUpStep.step_order)
+        )
+        steps = steps_result.scalars().all()
+        output.append({
+            "id": p.id,
+            "name": p.name,
+            "email": p.email,
+            "company": p.company,
+            "title": p.title,
+            "linkedin": p.linkedin,
+            "intel_summary": p.intel_summary,
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+            "steps": [
+                {
+                    "id": s.id,
+                    "order": s.step_order,
+                    "type": s.step_type,
+                    "delay_days": s.delay_days,
+                    "status": s.status,
+                    "subject": s.subject,
+                    "body": s.body,
+                    "scheduled_at": s.scheduled_at.isoformat() if s.scheduled_at else None,
+                    "completed_at": s.completed_at.isoformat() if s.completed_at else None,
+                }
+                for s in steps
+            ],
+        })
+
+    return output
+
+
+class UpdateStepRequest(BaseModel):
+    status: str  # "sent", "skipped", "pending"
+
+
+@router.patch("/followups/{person_id}/steps/{step_id}")
+async def api_update_step(
+    person_id: str,
+    step_id: str,
+    body: UpdateStepRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a follow-up step status (e.g., mark as sent)."""
+    from app.models.followup import FollowUpStep
+
+    result = await db.execute(
+        select(FollowUpStep).where(
+            FollowUpStep.id == step_id,
+            FollowUpStep.person_id == person_id,
+        )
+    )
+    step = result.scalar_one_or_none()
+    if not step:
+        raise HTTPException(status_code=404, detail="Step not found")
+
+    step.status = body.status
+    if body.status == "sent":
+        step.completed_at = datetime.utcnow()
+    await db.commit()
+    return {"id": step.id, "status": step.status}
