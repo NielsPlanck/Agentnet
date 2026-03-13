@@ -79,13 +79,14 @@ app = FastAPI(
 
 _cors_origins = [
     settings.frontend_url,
+    "https://agentnet.codiris.app",
+    "https://backagentnet.codiris.app",
     "http://localhost:3001",
     "http://localhost:3003",
     "http://localhost:8000",
 ]
-# In production, frontend_url is the real domain — no extra origins needed.
-# Filter out empty strings just in case.
-_cors_origins = [o for o in _cors_origins if o]
+# Filter out empty/duplicate strings.
+_cors_origins = list({o for o in _cors_origins if o})
 
 app.add_middleware(
     CORSMiddleware,
