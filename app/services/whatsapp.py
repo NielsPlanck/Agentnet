@@ -8,7 +8,10 @@ import base64
 import logging
 from pathlib import Path
 
-from playwright.async_api import async_playwright, Playwright, Browser, BrowserContext, Page
+try:
+    from playwright.async_api import async_playwright, Playwright, Browser, BrowserContext, Page
+except ImportError:
+    async_playwright = Playwright = Browser = BrowserContext = Page = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 

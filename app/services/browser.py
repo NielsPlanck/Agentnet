@@ -10,7 +10,10 @@ import logging
 import tempfile
 from pathlib import Path
 
-from playwright.async_api import async_playwright, Playwright, Browser, Page
+try:
+    from playwright.async_api import async_playwright, Playwright, Browser, Page
+except ImportError:
+    async_playwright = Playwright = Browser = Page = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
