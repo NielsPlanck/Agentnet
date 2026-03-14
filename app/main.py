@@ -91,6 +91,7 @@ _cors_origins = list({o for o in _cors_origins if o})
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
+    allow_origin_regex=r"https://.*\.codiris\.(app|build)",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
