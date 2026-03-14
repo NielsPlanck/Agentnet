@@ -1,3 +1,5 @@
+import { API_BASE } from "@/lib/config";
+
 export interface InputSchema {
   type: string;
   properties: Record<string, { type: string; description?: string; default?: unknown }>;
@@ -148,7 +150,7 @@ export async function* streamAsk(
   if (enabledSkills && enabledSkills.length > 0) {
     body.enabled_skills = enabledSkills;
   }
-  const res = await fetch("/v1/ask/stream", {
+  const res = await fetch(`${API_BASE}/v1/ask/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -183,7 +185,7 @@ export async function* streamAsk(
 }
 
 export async function sendFeedback(messageContent: string, vote: "up" | "down"): Promise<void> {
-  await fetch("/v1/feedback", {
+  await fetch(`${API_BASE}/v1/feedback`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ content: messageContent, vote }),
@@ -191,7 +193,7 @@ export async function sendFeedback(messageContent: string, vote: "up" | "down"):
 }
 
 export async function suggestTool(name: string, url: string, reason: string): Promise<void> {
-  await fetch("/v1/suggestions", {
+  await fetch(`${API_BASE}/v1/suggestions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, url, reason }),
@@ -206,8 +208,8 @@ export interface ToolStats {
 
 export async function fetchStats(): Promise<ToolStats> {
   const [toolsRes, capsRes] = await Promise.all([
-    fetch("/v1/tools"),
-    fetch("/v1/capabilities"),
+    fetch(`${API_BASE}/v1/tools`),
+    fetch(`${API_BASE}/v1/capabilities`),
   ]);
 
   const tools = toolsRes.ok ? await toolsRes.json() : [];
@@ -237,7 +239,7 @@ export interface StartAgentParams {
 export async function* streamJobAgent(
   params: StartAgentParams,
 ): AsyncGenerator<JobAgentSSE, void, unknown> {
-  const res = await fetch("/v1/jobs/agent/start", {
+  const res = await fetch(`${API_BASE}/v1/jobs/agent/start`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
@@ -289,7 +291,7 @@ export interface JobProfileData {
 }
 
 export async function saveJobProfile(data: JobProfileData): Promise<void> {
-  const res = await fetch("/v1/jobs/profile", {
+  const res = await fetch(`${API_BASE}/v1/jobs/profile`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -298,7 +300,7 @@ export async function saveJobProfile(data: JobProfileData): Promise<void> {
 }
 
 export async function uploadJobCV(base64: string, filename: string, mimeType: string, textContent: string = ""): Promise<void> {
-  const res = await fetch("/v1/jobs/profile/cv", {
+  const res = await fetch(`${API_BASE}/v1/jobs/profile/cv`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ base64, filename, mime_type: mimeType, text_content: textContent }),
@@ -307,7 +309,7 @@ export async function uploadJobCV(base64: string, filename: string, mimeType: st
 }
 
 export async function getJobProfile(): Promise<{ exists: boolean; [key: string]: unknown }> {
-  const res = await fetch("/v1/jobs/profile");
+  const res = await fetch(`${API_BASE}/v1/jobs/profile`);
   if (!res.ok) throw new Error("Failed to get profile");
   return res.json();
 }
@@ -324,7 +326,7 @@ export interface JobApplicationItem {
 }
 
 export async function getJobApplications(): Promise<{ applications: JobApplicationItem[] }> {
-  const res = await fetch("/v1/jobs/applications");
+  const res = await fetch(`${API_BASE}/v1/jobs/applications`);
   if (!res.ok) throw new Error("Failed to get applications");
   return res.json();
 }

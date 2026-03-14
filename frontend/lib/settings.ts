@@ -1,4 +1,5 @@
 /** API client for settings endpoints */
+import { API_BASE } from "@/lib/config";
 
 export interface Preferences {
   color_mode: string;
@@ -24,13 +25,13 @@ export interface OAuthConnectionInfo {
 }
 
 export async function fetchPreferences(): Promise<Preferences> {
-  const res = await fetch("/v1/settings/preferences", { credentials: "include" });
+  const res = await fetch(`${API_BASE}/v1/settings/preferences`, { credentials: "include" });
   if (!res.ok) throw new Error("Failed to fetch preferences");
   return res.json();
 }
 
 export async function updatePreferences(prefs: Partial<Preferences>): Promise<Preferences> {
-  const res = await fetch("/v1/settings/preferences", {
+  const res = await fetch(`${API_BASE}/v1/settings/preferences`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -41,7 +42,7 @@ export async function updatePreferences(prefs: Partial<Preferences>): Promise<Pr
 }
 
 export async function updateProfile(data: { display_name?: string }): Promise<Profile> {
-  const res = await fetch("/v1/settings/profile", {
+  const res = await fetch(`${API_BASE}/v1/settings/profile`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -52,7 +53,7 @@ export async function updateProfile(data: { display_name?: string }): Promise<Pr
 }
 
 export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
-  const res = await fetch("/v1/settings/password", {
+  const res = await fetch(`${API_BASE}/v1/settings/password`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
@@ -65,13 +66,13 @@ export async function changePassword(currentPassword: string, newPassword: strin
 }
 
 export async function fetchConnections(): Promise<OAuthConnectionInfo[]> {
-  const res = await fetch("/v1/settings/connections", { credentials: "include" });
+  const res = await fetch(`${API_BASE}/v1/settings/connections`, { credentials: "include" });
   if (!res.ok) throw new Error("Failed to fetch connections");
   return res.json();
 }
 
 export async function clearHistory(): Promise<void> {
-  const res = await fetch("/v1/settings/history", {
+  const res = await fetch(`${API_BASE}/v1/settings/history`, {
     method: "DELETE",
     credentials: "include",
   });
@@ -79,7 +80,7 @@ export async function clearHistory(): Promise<void> {
 }
 
 export async function exportData(): Promise<void> {
-  const res = await fetch("/v1/settings/export", {
+  const res = await fetch(`${API_BASE}/v1/settings/export`, {
     method: "POST",
     credentials: "include",
   });

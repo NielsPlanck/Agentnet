@@ -1,3 +1,5 @@
+import { API_BASE } from "@/lib/config";
+
 /**
  * Workflow Builder — API client for workflow CRUD and execution.
  */
@@ -56,7 +58,7 @@ export const STEP_TYPES: {
 // ── API calls ───────────────────────────────────────────────────────
 
 async function api(path: string, options?: RequestInit) {
-  const res = await fetch(`/v1/workflows${path}`, {
+  const res = await fetch(`${API_BASE}/v1/workflows${path}`, {
     credentials: "include",
     headers: { "Content-Type": "application/json" },
     ...options,

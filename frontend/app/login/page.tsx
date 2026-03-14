@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { useAuth } from "@/lib/auth";
+import { API_BASE } from "@/lib/config";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
@@ -15,7 +16,7 @@ export default function LoginPage() {
   }, [user, router]);
 
   const handleGoogleSignIn = () => {
-    window.location.href = "/v1/auth/google/start";
+    window.location.href = `${API_BASE}/v1/auth/google/start`;
   };
 
   const error = typeof window !== "undefined"

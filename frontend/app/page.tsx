@@ -36,6 +36,7 @@ import { SignupPrompt } from "@/components/signup-prompt";
 import { ChatSidebar } from "@/components/chat-sidebar";
 import { fetchConversation } from "@/lib/history";
 import { useRouter } from "next/navigation";
+import { API_BASE } from "@/lib/config";
 import {
   fetchCustomSkills,
   loadLocalCustomSkills,
@@ -375,7 +376,7 @@ export default function Home() {
     fetchStats().then(setStats).catch(() => {});
 
     const checkHealth = () => {
-      fetch("/health")
+      fetch(`${API_BASE}/health`)
         .then((r) => setServerStatus(r.ok ? "online" : "offline"))
         .catch(() => setServerStatus("offline"));
     };
@@ -799,7 +800,7 @@ export default function Home() {
               .map((m) => `${m.role}: ${m.content}`)
               .join("\n");
             if (convText.length > 100) {
-              fetch("/v1/memories/extract", {
+              fetch(`${API_BASE}/v1/memories/extract`, {
                 method: "POST",
                 credentials: "include",
                 headers: { "Content-Type": "application/json" },
@@ -1064,7 +1065,7 @@ export default function Home() {
           }}
           onGoToSignup={() => {
             setShowSignupPrompt(false);
-            window.location.href = "/v1/auth/google/start";
+            window.location.href = `${API_BASE}/v1/auth/google/start`;
           }}
         />
       )}

@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useCallback, Fragment } from "react";
 import { Download, LogOut, ChevronDown, ChevronRight, ThumbsUp, ThumbsDown, List, LayoutGrid, Table2, Globe, Search, Loader2, Trash2, Plus, RefreshCw, Globe2, Wrench, Layers, Link } from "lucide-react";
+import { API_BASE } from "@/lib/config";
 
-const API = "/api/v1/admin";
+const API = `${API_BASE}/api/v1/admin`;
 
 type ViewMode = "list" | "table" | "card";
 
@@ -425,7 +426,7 @@ function WebMCPPanel({ token }: { token: string }) {
   const loadTools = useCallback(async () => {
     setLoadingTools(true);
     try {
-      const res = await fetch("/api/v1/webmcp/tools");
+      const res = await fetch(`${API_BASE}/api/v1/webmcp/tools`);
       if (res.ok) setWebmcpTools(await res.json());
     } catch { /* ignore */ }
     setLoadingTools(false);
@@ -440,7 +441,7 @@ function WebMCPPanel({ token }: { token: string }) {
     setScanning(true);
     setScanResult(null);
     try {
-      const res = await fetch("/api/v1/webmcp/scan", {
+      const res = await fetch(`${API_BASE}/api/v1/webmcp/scan`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: scanUrl }),
@@ -2000,7 +2001,7 @@ function MCPMarketPanel({ token }: { token: string }) {
   const loadTools = async () => {
     setLoadingTools(true);
     try {
-      const res = await fetch("/api/v1/admin/mcpmarket/tools", {
+      const res = await fetch(`${API_BASE}/api/v1/admin/mcpmarket/tools`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
@@ -2017,7 +2018,7 @@ function MCPMarketPanel({ token }: { token: string }) {
   const startCrawl = async () => {
     setStatus("starting...");
     try {
-      const res = await fetch("/api/v1/admin/mcpmarket/crawl", {
+      const res = await fetch(`${API_BASE}/api/v1/admin/mcpmarket/crawl`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ limit }),

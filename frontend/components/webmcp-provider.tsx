@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { API_BASE } from "@/lib/config";
 
 /**
  * WebMCP Provider — registers AgentNet's capabilities as browser-accessible tools
@@ -58,7 +59,7 @@ export function WebMCPProvider() {
         required: ["query"],
       },
       execute: async (params) => {
-        const res = await fetch("/api/v1/search", {
+        const res = await fetch(`${API_BASE}/api/v1/search`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -96,7 +97,7 @@ export function WebMCPProvider() {
         required: ["query"],
       },
       execute: async (params) => {
-        const res = await fetch("/api/v1/ask", {
+        const res = await fetch(`${API_BASE}/api/v1/ask`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ query: params.query }),
@@ -131,7 +132,7 @@ export function WebMCPProvider() {
         required: ["url"],
       },
       execute: async (params) => {
-        const res = await fetch("/api/v1/webmcp/scan", {
+        const res = await fetch(`${API_BASE}/api/v1/webmcp/scan`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ url: params.url }),
@@ -159,7 +160,7 @@ export function WebMCPProvider() {
         properties: {},
       },
       execute: async () => {
-        const res = await fetch("/api/v1/webmcp/tools");
+        const res = await fetch(`${API_BASE}/api/v1/webmcp/tools`);
         const data = await res.json();
         return {
           content: [

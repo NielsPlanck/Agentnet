@@ -6,6 +6,7 @@ import ReactMarkdown from "react-markdown";
 import { JobAgentView } from "@/components/job-agent-view";
 import type { SearchResultItem, WebSource, UrlSource, ChatMessage as ChatMsg } from "@/lib/api";
 import { sendFeedback, suggestTool, streamAsk } from "@/lib/api";
+import { API_BASE } from "@/lib/config";
 import { SourceCard } from "@/components/source-card";
 import { ChevronRight, ChevronDown, ThumbsUp, ThumbsDown, Plus, X, Check, Calendar, Clock, Minus, Zap, ExternalLink, Globe, Loader2, Maximize2, Minimize2, Sheet, Columns, Bell, StickyNote, ListChecks, CalendarPlus, Timer, Inbox, AlertTriangle, Star, Mail, Send, MessageSquare, Users, FileText, CalendarCheck } from "lucide-react";
 
@@ -635,7 +636,7 @@ function DataTable({ block, onAction, fetchMoreContext }: {
     setLoadingMore(true);
     setLoadingLabel(`Searching for ${addCols.join(", ")}…`);
     try {
-      const res = await fetch("/v1/enrich-table", {
+      const res = await fetch(`${API_BASE}/v1/enrich-table`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -691,7 +692,7 @@ function DataTable({ block, onAction, fetchMoreContext }: {
       const csvContent = header + "\n" + csvRows;
 
       // Upload CSV to temp storage on backend
-      const res = await fetch("/v1/temp-csv", {
+      const res = await fetch(`${API_BASE}/v1/temp-csv`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ csv: csvContent }),
@@ -1539,7 +1540,7 @@ function EmailComposer({ data }: { data: EmailComposerData }) {
   const handleSaveAsDraft = async () => {
     setSaving(true); setError(""); setNeedsConnect(false);
     try {
-      const res = await fetch("/v1/gmail/drafts", {
+      const res = await fetch(`${API_BASE}/v1/gmail/drafts`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ to, subject: currentSubject, body: currentBody }),
       });

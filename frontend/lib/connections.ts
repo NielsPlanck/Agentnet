@@ -1,4 +1,4 @@
-const API_BASE = "http://localhost:8000/v1";
+import { API_BASE } from "@/lib/config";
 
 export interface ConnectionStatus {
   connected: boolean;
@@ -14,7 +14,7 @@ export interface ExecuteResult {
 }
 
 export async function checkConnection(toolId: string): Promise<ConnectionStatus> {
-  const res = await fetch(`${API_BASE}/oauth/status/${toolId}`, {
+  const res = await fetch(`${API_BASE}/v1/oauth/status/${toolId}`, {
     credentials: "include",
   });
   if (!res.ok) return { connected: false };
@@ -22,13 +22,11 @@ export async function checkConnection(toolId: string): Promise<ConnectionStatus>
 }
 
 export function startOAuthFlow(toolId: string) {
-  // Redirect directly to the backend (not through Next.js proxy)
-  // because OAuth callback from Google goes to the backend directly
-  window.location.href = `http://localhost:8000/v1/oauth/google/start?tool_id=${toolId}`;
+  window.location.href = `${API_BASE}/v1/oauth/google/start?tool_id=${toolId}`;
 }
 
 export async function disconnectTool(toolId: string): Promise<void> {
-  await fetch(`${API_BASE}/oauth/disconnect/${toolId}`, {
+  await fetch(`${API_BASE}/v1/oauth/disconnect/${toolId}`, {
     method: "DELETE",
     credentials: "include",
   });
@@ -38,7 +36,7 @@ export async function executeAction(
   actionId: string,
   params: Record<string, unknown> = {}
 ): Promise<ExecuteResult> {
-  const res = await fetch(`${API_BASE}/actions/${actionId}/execute`, {
+  const res = await fetch(`${API_BASE}/v1/actions/${actionId}/execute`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",

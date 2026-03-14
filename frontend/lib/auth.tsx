@@ -1,6 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
+import { API_BASE } from "@/lib/config";
 
 export interface User {
   id: string;
@@ -27,7 +28,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const refresh = useCallback(async () => {
     try {
-      const res = await fetch("/v1/auth/me", { credentials: "include" });
+      const res = await fetch(`${API_BASE}/v1/auth/me`, { credentials: "include" });
       if (res.ok) {
         const data = await res.json();
         setUser(data.user || null);
@@ -56,7 +57,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [refresh]);
 
   const login = useCallback(async (email: string, password: string) => {
-    const res = await fetch("/v1/auth/login", {
+    const res = await fetch(`${API_BASE}/v1/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
@@ -71,7 +72,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signup = useCallback(async (email: string, password: string, displayName?: string) => {
-    const res = await fetch("/v1/auth/signup", {
+    const res = await fetch(`${API_BASE}/v1/auth/signup`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
@@ -86,7 +87,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
-    await fetch("/v1/auth/logout", { method: "POST", credentials: "include" });
+    await fetch(`${API_BASE}/v1/auth/logout`, { method: "POST", credentials: "include" });
     setUser(null);
   }, []);
 

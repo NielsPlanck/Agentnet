@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { useAuth } from "@/lib/auth";
+import { API_BASE } from "@/lib/config";
 
 export type ColorMode = "light" | "auto" | "dark";
 export type ChatFont = "default" | "sans" | "system" | "dyslexic";
@@ -77,7 +78,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   // Sync from backend when user logs in
   useEffect(() => {
     if (!user) return;
-    fetch("/v1/settings/preferences", { credentials: "include" })
+    fetch(`${API_BASE}/v1/settings/preferences`, { credentials: "include" })
       .then((r) => r.ok ? r.json() : null)
       .then((prefs) => {
         if (!prefs) return;
@@ -103,7 +104,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       localStorage.setItem("agentnet_color_mode", mode);
       // Sync to backend if logged in
       if (user) {
-        fetch("/v1/settings/preferences", {
+        fetch(`${API_BASE}/v1/settings/preferences`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
@@ -119,7 +120,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       setChatFontState(font);
       localStorage.setItem("agentnet_chat_font", font);
       if (user) {
-        fetch("/v1/settings/preferences", {
+        fetch(`${API_BASE}/v1/settings/preferences`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
@@ -135,7 +136,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       setFrontStyleState(style);
       localStorage.setItem("agentnet_front_style", style);
       if (user) {
-        fetch("/v1/settings/preferences", {
+        fetch(`${API_BASE}/v1/settings/preferences`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           credentials: "include",

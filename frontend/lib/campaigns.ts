@@ -1,3 +1,5 @@
+import { API_BASE } from "@/lib/config";
+
 /**
  * Campaign API client — B2B multichannel prospecting.
  */
@@ -84,7 +86,7 @@ export interface CampaignFullStats {
 
 // ── API Functions ────────────────────────────────────────────────
 
-const BASE = "/v1/campaigns";
+const BASE = `${API_BASE}/v1/campaigns`;
 
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {

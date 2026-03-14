@@ -54,6 +54,7 @@ import {
   Upload,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { API_BASE } from "@/lib/config";
 
 type Tab = "general" | "account" | "privacy" | "usage" | "connectors" | "memory" | "skills";
 
@@ -179,7 +180,7 @@ export default function SettingsPage() {
       const params = new URLSearchParams();
       if (cat) params.set("category", cat);
       params.set("limit", "100");
-      const res = await fetch(`/v1/memories/?${params}`, { credentials: "include" });
+      const res = await fetch(`${API_BASE}/v1/memories/?${params}`, { credentials: "include" });
       if (res.ok) {
         const data = await res.json();
         setMemories(data.memories || []);
@@ -200,7 +201,7 @@ export default function SettingsPage() {
 
   const handleDeleteMemory = useCallback(async (id: string) => {
     try {
-      await fetch(`/v1/memories/${id}`, { method: "DELETE", credentials: "include" });
+      await fetch(`${API_BASE}/v1/memories/${id}`, { method: "DELETE", credentials: "include" });
       setMemories((prev) => prev.filter((m) => m.id !== id));
       setMemoryTotal((prev) => prev - 1);
     } catch {
@@ -210,7 +211,7 @@ export default function SettingsPage() {
 
   const handleSaveMemory = useCallback(async (id: string) => {
     try {
-      await fetch(`/v1/memories/${id}`, {
+      await fetch(`${API_BASE}/v1/memories/${id}`, {
         method: "PUT",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -232,7 +233,7 @@ export default function SettingsPage() {
     }
     setLoadingMemories(true);
     try {
-      const res = await fetch(`/v1/memories/search?q=${encodeURIComponent(memorySearch)}`, { credentials: "include" });
+      const res = await fetch(`${API_BASE}/v1/memories/search?q=${encodeURIComponent(memorySearch)}`, { credentials: "include" });
       if (res.ok) {
         const data = await res.json();
         setMemories(data.results || []);

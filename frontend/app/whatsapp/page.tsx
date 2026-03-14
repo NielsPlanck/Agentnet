@@ -17,10 +17,11 @@ import {
   X,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { API_BASE } from "@/lib/config";
 
 // ── API helpers ─────────────────────────────────────────────────────
 async function waApi(path: string, options?: RequestInit) {
-  const res = await fetch(`/v1/whatsapp${path}`, {
+  const res = await fetch(`${API_BASE}/v1/whatsapp${path}`, {
     credentials: "include",
     headers: { "Content-Type": "application/json" },
     ...options,

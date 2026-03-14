@@ -1,3 +1,5 @@
+import { API_BASE } from "@/lib/config";
+
 /**
  * Skills — reusable capabilities that extend AgentNet.
  *
@@ -253,14 +255,14 @@ export function getEnabledSkills(): Skill[] {
 // ── Custom Skills API (server-backed for logged-in users) ─────────────────
 
 export async function fetchCustomSkills(): Promise<CustomSkillData[]> {
-  const res = await fetch("/v1/skills/", { credentials: "include" });
+  const res = await fetch(`${API_BASE}/v1/skills/`, { credentials: "include" });
   if (!res.ok) throw new Error("Failed to fetch custom skills");
   const data = await res.json();
   return data.skills || [];
 }
 
 export async function createCustomSkill(payload: CreateSkillPayload): Promise<CustomSkillData> {
-  const res = await fetch("/v1/skills/", {
+  const res = await fetch(`${API_BASE}/v1/skills/`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
@@ -274,7 +276,7 @@ export async function createCustomSkill(payload: CreateSkillPayload): Promise<Cu
 }
 
 export async function updateCustomSkill(id: string, payload: UpdateSkillPayload): Promise<CustomSkillData> {
-  const res = await fetch(`/v1/skills/${id}`, {
+  const res = await fetch(`${API_BASE}/v1/skills/${id}`, {
     method: "PUT",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
@@ -288,7 +290,7 @@ export async function updateCustomSkill(id: string, payload: UpdateSkillPayload)
 }
 
 export async function deleteCustomSkill(id: string): Promise<void> {
-  const res = await fetch(`/v1/skills/${id}`, {
+  const res = await fetch(`${API_BASE}/v1/skills/${id}`, {
     method: "DELETE",
     credentials: "include",
   });
@@ -296,7 +298,7 @@ export async function deleteCustomSkill(id: string): Promise<void> {
 }
 
 export async function shareSkill(id: string): Promise<SkillExportData> {
-  const res = await fetch(`/v1/skills/${id}/share`, {
+  const res = await fetch(`${API_BASE}/v1/skills/${id}/share`, {
     method: "POST",
     credentials: "include",
   });
@@ -305,7 +307,7 @@ export async function shareSkill(id: string): Promise<SkillExportData> {
 }
 
 export async function importSkillByCode(shareCode: string): Promise<CustomSkillData> {
-  const res = await fetch("/v1/skills/import", {
+  const res = await fetch(`${API_BASE}/v1/skills/import`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
@@ -319,7 +321,7 @@ export async function importSkillByCode(shareCode: string): Promise<CustomSkillD
 }
 
 export async function importSkillFromJSON(skillData: SkillExportData): Promise<CustomSkillData> {
-  const res = await fetch("/v1/skills/import", {
+  const res = await fetch(`${API_BASE}/v1/skills/import`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },

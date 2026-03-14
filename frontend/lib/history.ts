@@ -1,4 +1,5 @@
 /** API client for chat history endpoints */
+import { API_BASE } from "@/lib/config";
 
 export interface ConversationSummary {
   id: string;
@@ -29,7 +30,7 @@ export async function fetchConversations(
   offset = 0
 ): Promise<{ conversations: ConversationSummary[]; total: number }> {
   const res = await fetch(
-    `/v1/history/conversations?limit=${limit}&offset=${offset}`,
+    `${API_BASE}/v1/history/conversations?limit=${limit}&offset=${offset}`,
     { credentials: "include" }
   );
   if (!res.ok) throw new Error("Failed to fetch conversations");
@@ -37,7 +38,7 @@ export async function fetchConversations(
 }
 
 export async function fetchConversation(id: string): Promise<ConversationDetail> {
-  const res = await fetch(`/v1/history/conversations/${id}`, {
+  const res = await fetch(`${API_BASE}/v1/history/conversations/${id}`, {
     credentials: "include",
   });
   if (!res.ok) throw new Error("Failed to fetch conversation");
@@ -45,7 +46,7 @@ export async function fetchConversation(id: string): Promise<ConversationDetail>
 }
 
 export async function deleteConversation(id: string): Promise<void> {
-  const res = await fetch(`/v1/history/conversations/${id}`, {
+  const res = await fetch(`${API_BASE}/v1/history/conversations/${id}`, {
     method: "DELETE",
     credentials: "include",
   });
