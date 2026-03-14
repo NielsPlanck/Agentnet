@@ -128,6 +128,15 @@
   }
 }
 
+/* ── Chat message prose overrides ─────────────────────────────── */
+/* Prevent Tailwind prose from imposing its own font-size/line-height */
+.prose p,
+.prose li,
+.prose blockquote {
+  font-size: inherit;
+  line-height: inherit;
+}
+
 /* Chat font variants */
 body[data-chat-font="sans"] .chat-text {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -173,5 +182,15 @@ body[data-front-style="chatgpt"] {
   }
   50% {
     height: 20px;
+  }
+}
+
+/* Streaming progress bar shimmer */
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
   }
 }

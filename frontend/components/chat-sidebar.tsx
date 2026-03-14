@@ -61,6 +61,19 @@ interface ChatSidebarProps {
 
 const SIDEBAR_KEY = "agentnet_sidebar_collapsed";
 
+/** Hook: true when viewport <= 768px */
+function useIsMobile() {
+  const [mobile, setMobile] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 768px)");
+    setMobile(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setMobile(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+  return mobile;
+}
+
 function timeAgo(dateStr: string | null): string {
   if (!dateStr) return "";
   const date = new Date(dateStr);
@@ -113,7 +126,9 @@ export function ChatSidebar({
   onLoadConversation,
   isStreaming,
 }: ChatSidebarProps) {
+  const isMobile = useIsMobile();
   const [collapsed, setCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -130,13 +145,16 @@ export function ChatSidebar({
   // Restore collapsed state + skills
   useEffect(() => {
     try {
-      const saved = localStorage.getItem(SIDEBAR_KEY);
-      if (saved === "true") setCollapsed(true);
-      const savedSkills = localStorage.getItem(SKILLS_COLLAPSED_KEY);
-      if (savedSkills === "true") setSkillsCollapsed(true);
+      if (isMobile) {
+        setCollapsed(true); // always start collapsed on mobile
+      } else {
+        const saved = localStorage.getItem(SIDEBAR_KEY);
+        if (saved === "true") setCollapsed(true);
+      }
+      // Skills always start expanded — user can collapse if needed
     } catch {}
     setSkills(getAllSkills());
-  }, []);
+  }, [isMobile]);
 
   // Load custom skills
   useEffect(() => {
@@ -156,11 +174,19 @@ export function ChatSidebar({
   }, [user]);
 
   const toggleCollapsed = () => {
-    setCollapsed((prev) => {
-      const next = !prev;
-      try { localStorage.setItem(SIDEBAR_KEY, String(next)); } catch {}
-      return next;
-    });
+    if (isMobile) {
+      setMobileOpen((prev) => !prev);
+    } else {
+      setCollapsed((prev) => {
+        const next = !prev;
+        try { localStorage.setItem(SIDEBAR_KEY, String(next)); } catch {}
+        return next;
+      });
+    }
+  };
+
+  const closeMobile = () => {
+    if (isMobile) setMobileOpen(false);
   };
 
   const toggleSkill = (skillId: string) => {
@@ -256,8 +282,9 @@ export function ChatSidebar({
 
   const groups = groupByTime(filtered);
 
-  const enabledCount = skills.filter((s) => s.enabled).length + customSkills.filter((s) => s.enabled).length;
-  const totalCount = skills.length + customSkills.length;
+  const sidebarSkills = skills.filter((s) => s.category !== "integration");
+  const enabledCount = sidebarSkills.filter((s) => s.enabled).length + customSkills.filter((s) => s.enabled).length;
+  const totalCount = sidebarSkills.length + customSkills.length;
 
   const initials = user?.display_name
     ? user.display_name
@@ -268,7 +295,7 @@ export function ChatSidebar({
         .slice(0, 2)
     : user?.email?.[0]?.toUpperCase() || "?";
 
-  // Collapsed sidebar — just icons
+  // Desktop: Collapsed sidebar — just icons
   if (collapsed) {
     return (
       <div className="w-[52px] shrink-0 bg-[var(--sidebar)] border-r border-[var(--sidebar-border)] flex flex-col items-center py-3 gap-1">
@@ -340,9 +367,9 @@ export function ChatSidebar({
   const builtInSkills = skills.filter((s) => s.category === "built-in");
   const integrationSkills = skills.filter((s) => s.category === "integration");
 
-  // Expanded sidebar
-  return (
-    <div className="w-[260px] shrink-0 bg-[var(--sidebar)] border-r border-[var(--sidebar-border)] flex flex-col h-full select-none">
+  /** Shared expanded sidebar contents (used in desktop + mobile overlay) */
+  const renderExpandedContent = () => (
+    <>
       {/* Header: AgentNet + collapse */}
       <div className="flex items-center justify-between px-3 pt-3 pb-1">
         <span className="text-[15px] font-semibold text-[var(--sidebar-foreground)] tracking-tight">
@@ -362,7 +389,7 @@ export function ChatSidebar({
       <div className="px-2 py-1.5 flex flex-col gap-0.5">
         <button
           type="button"
-          onClick={onNewChat}
+          onClick={() => { onNewChat(); closeMobile(); }}
           disabled={isStreaming}
           className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm text-[var(--sidebar-foreground)] hover:bg-[var(--sidebar-accent)] transition-colors disabled:opacity-40 w-full text-left"
         >
@@ -420,46 +447,7 @@ export function ChatSidebar({
             {/* Built-in skills */}
             {builtInSkills.length > 0 && (
               <>
-                <div className="px-2.5 pt-1.5 pb-0.5">
-                  <span className="text-[0.55rem] font-medium uppercase tracking-wider text-[var(--muted-foreground)] opacity-60">
-                    Built-in
-                  </span>
-                </div>
                 {builtInSkills.map((skill) => {
-                  const Icon = ICON_MAP[skill.icon] || Zap;
-                  return (
-                    <button
-                      key={skill.id}
-                      type="button"
-                      onClick={() => toggleSkill(skill.id)}
-                      className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[13px] hover:bg-[var(--sidebar-accent)] transition-colors w-full text-left group"
-                    >
-                      <Icon className={`h-3.5 w-3.5 shrink-0 ${skill.enabled ? "text-green-500" : "text-[var(--muted-foreground)]"}`} />
-                      <span className={`flex-1 truncate ${skill.enabled ? "text-[var(--sidebar-foreground)]" : "text-[var(--muted-foreground)]"}`}>
-                        {skill.name}
-                      </span>
-                      <div className={`h-4 w-4 rounded-full flex items-center justify-center shrink-0 transition-colors ${
-                        skill.enabled
-                          ? "bg-green-500 text-white"
-                          : "border border-[var(--sidebar-border)] text-transparent group-hover:border-[var(--muted-foreground)]"
-                      }`}>
-                        <Check className="h-2.5 w-2.5" />
-                      </div>
-                    </button>
-                  );
-                })}
-              </>
-            )}
-
-            {/* Integration skills */}
-            {integrationSkills.length > 0 && (
-              <>
-                <div className="px-2.5 pt-2 pb-0.5">
-                  <span className="text-[0.55rem] font-medium uppercase tracking-wider text-[var(--muted-foreground)] opacity-60">
-                    Integrations
-                  </span>
-                </div>
-                {integrationSkills.map((skill) => {
                   const Icon = ICON_MAP[skill.icon] || Zap;
                   return (
                     <button
@@ -488,19 +476,6 @@ export function ChatSidebar({
             {/* Custom skills */}
             {customSkills.length > 0 && (
               <>
-                <div className="px-2.5 pt-2 pb-0.5 flex items-center justify-between">
-                  <span className="text-[0.55rem] font-medium uppercase tracking-wider text-[var(--muted-foreground)] opacity-60">
-                    Custom
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => router.push("/settings?tab=skills")}
-                    className="text-[0.55rem] text-[var(--muted-foreground)] hover:text-[var(--sidebar-foreground)] transition-colors"
-                    title="Manage skills"
-                  >
-                    +
-                  </button>
-                </div>
                 {customSkills.map((skill) => {
                   const Icon = ICON_MAP[skill.icon] || Zap;
                   return (
@@ -583,8 +558,8 @@ export function ChatSidebar({
                     key={c.id}
                     role="button"
                     tabIndex={0}
-                    onClick={() => onLoadConversation(c.id)}
-                    onKeyDown={(e) => { if (e.key === "Enter") onLoadConversation(c.id); }}
+                    onClick={() => { onLoadConversation(c.id); closeMobile(); }}
+                    onKeyDown={(e) => { if (e.key === "Enter") { onLoadConversation(c.id); closeMobile(); } }}
                     className="group w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-[var(--sidebar-accent)] transition-colors flex items-center gap-1.5 cursor-pointer"
                   >
                     <p className="flex-1 min-w-0 text-[13px] text-[var(--sidebar-foreground)] truncate">
@@ -701,6 +676,42 @@ export function ChatSidebar({
           </button>
         )}
       </div>
+    </>
+  );
+
+  // Mobile: floating toggle when sidebar is closed
+  if (isMobile && !mobileOpen) {
+    return (
+      <button
+        type="button"
+        onClick={toggleCollapsed}
+        className="fixed top-3 left-3 z-40 h-9 w-9 flex items-center justify-center rounded-lg bg-[var(--sidebar)] border border-[var(--sidebar-border)] text-[var(--sidebar-foreground)] shadow-lg"
+        title="Open sidebar"
+      >
+        <PanelLeft className="h-4 w-4" />
+      </button>
+    );
+  }
+
+  // Mobile: overlay when open
+  if (isMobile && mobileOpen) {
+    return (
+      <>
+        <div
+          className="fixed inset-0 z-40 bg-black/50"
+          onClick={closeMobile}
+        />
+        <div className="fixed inset-y-0 left-0 z-50 w-[280px] bg-[var(--sidebar)] border-r border-[var(--sidebar-border)] flex flex-col h-full select-none shadow-2xl">
+          {renderExpandedContent()}
+        </div>
+      </>
+    );
+  }
+
+  // Desktop: Expanded sidebar
+  return (
+    <div className="w-[260px] shrink-0 bg-[var(--sidebar)] border-r border-[var(--sidebar-border)] flex flex-col h-full select-none">
+      {renderExpandedContent()}
     </div>
   );
 }

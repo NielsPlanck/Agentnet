@@ -445,7 +445,7 @@ export function SearchBar({ onSend, isStreaming, compact, light, mode = "agentne
   /* ── Compact (in-chat) variant ── */
   if (compact) {
     return (
-      <div className="w-full max-w-2xl px-4">
+      <div className="w-full max-w-2xl px-0 sm:px-4">
         <form
           onSubmit={handleSubmit}
           className="flex flex-col rounded-2xl border border-[var(--border)] bg-[var(--card)] focus-within:border-[var(--ring)] p-2 transition-[border-color,box-shadow] focus-within:shadow-sm"
@@ -517,7 +517,7 @@ export function SearchBar({ onSend, isStreaming, compact, light, mode = "agentne
 
   /* ── Landing (light) variant ── */
   return (
-    <div className="w-full max-w-3xl px-4">
+    <div className="w-full max-w-3xl px-1 sm:px-4">
       <form
         onSubmit={handleSubmit}
         className="flex flex-col rounded-2xl border border-[var(--border)] bg-[var(--card)] transition-[border-color,box-shadow] focus-within:border-[var(--ring)] focus-within:shadow-sm"

@@ -273,6 +273,8 @@ export default function Home() {
   const activeTab = tabs.find((t) => t.id === activeTabId) || null;
   const messages = activeTab?.messages ?? [];
   const isStreaming = activeTab?.isStreaming ?? false;
+  const anyTabStreaming = tabs.some((t) => t.isStreaming);
+  const backgroundStreaming = anyTabStreaming && !isStreaming; // another tab is streaming
   const mode = activeTab?.mode ?? "agentnet";
   const error = activeTab?.error ?? "";
 
@@ -291,6 +293,22 @@ export default function Home() {
   const customSkillsRef = useRef<CustomSkillData[]>([]);
 
   const [serverStatus, setServerStatus] = useState<"checking" | "online" | "offline">("checking");
+
+  // Update browser tab title when agent is running
+  useEffect(() => {
+    if (anyTabStreaming) {
+      document.title = "⚡ Agent running… — Iris";
+    } else {
+      document.title = "Iris — AgentNet";
+    }
+  }, [anyTabStreaming]);
+
+  // Request notification permission on mount
+  useEffect(() => {
+    if (typeof Notification !== "undefined" && Notification.permission === "default") {
+      Notification.requestPermission().catch(() => {});
+    }
+  }, []);
 
   // Load custom skills once on mount and when user changes
   useEffect(() => {
@@ -788,6 +806,28 @@ export default function Home() {
           setShowSignupPrompt(true);
         }
 
+        // Notify user if the response needs their input (choice options or agent question)
+        // and they're on a different tab or the browser isn't focused
+        if (document.hidden || tabId !== activeTabId) {
+          const finalTab = tabs.find((t) => t.id === tabId);
+          const lastMsg = finalTab?.messages[finalTab.messages.length - 1];
+          const hasChoices = lastMsg?.content && /^[A-E]\)\s/m.test(lastMsg.content);
+          const hasAgentQ = lastMsg?.agentQuestion;
+          if (hasChoices || hasAgentQ) {
+            try {
+              if (Notification.permission === "granted") {
+                new Notification("Iris needs your input", {
+                  body: hasAgentQ ? hasAgentQ.question : "Please choose an option to continue.",
+                  icon: "/iris-logo.png",
+                  tag: "iris-input-needed",
+                });
+              } else if (Notification.permission !== "denied") {
+                Notification.requestPermission();
+              }
+            } catch {}
+          }
+        }
+
         // Auto-extract memories from conversation (fire-and-forget, only if logged in)
         if (user) {
           try {
@@ -860,7 +900,7 @@ export default function Home() {
 
         {/* Landing */}
         {!hasMessages && (
-          <div className={`flex-1 flex flex-col items-center px-4 pb-32 ${
+          <div className={`flex-1 flex flex-col items-center px-3 sm:px-4 pb-24 sm:pb-32 ${
             frontStyle === "chatgpt" ? "justify-center" : "justify-start pt-4"
           }`}>
             {/* Iris flower logo — only in Claude style */}
@@ -880,7 +920,7 @@ export default function Home() {
                   <img
                     src="/iris-logo.png"
                     alt="Iris"
-                    className={`relative h-36 w-auto object-contain transition-all duration-500 ${
+                    className={`relative h-24 sm:h-36 w-auto object-contain transition-all duration-500 ${
                       voiceActive ? "drop-shadow-[0_0_16px_rgba(139,92,246,0.7)]" : "opacity-90 group-hover:opacity-100"
                     }`}
                   />
@@ -900,10 +940,10 @@ export default function Home() {
             )}
 
             <h1
-              className={`text-[var(--foreground)] tracking-tight mb-12 text-center ${
+              className={`text-[var(--foreground)] tracking-tight mb-8 sm:mb-12 text-center ${
                 frontStyle === "chatgpt"
-                  ? "text-3xl sm:text-4xl font-semibold"
-                  : "text-4xl sm:text-5xl font-light"
+                  ? "text-2xl sm:text-3xl md:text-4xl font-semibold"
+                  : "text-3xl sm:text-4xl md:text-5xl font-light"
               }`}
               style={frontStyle === "claude" ? { fontFamily: "'Times New Roman', Georgia, serif" } : undefined}
             >
@@ -917,7 +957,7 @@ export default function Home() {
         {hasMessages && (
           <>
             {/* Slim top bar with Iris branding + notification bell */}
-            <div className="shrink-0 border-b border-[var(--border)] px-4 py-3 flex items-center justify-center relative">
+            <div className="shrink-0 px-4 py-3 flex items-center justify-center relative">
               <button
                 type="button"
                 onClick={() => setVoiceActive((v) => !v)}
@@ -957,9 +997,23 @@ export default function Home() {
                   </span>
                 )}
               </button>
+              {/* Background streaming indicator — another tab has an agent running */}
+              {backgroundStreaming && !voiceActive && (
+                <span className="relative flex h-1.5 w-1.5 ml-1.5">
+                  <span className="absolute inline-flex h-full w-full rounded-full bg-indigo-500 opacity-75 animate-ping" />
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-indigo-500" />
+                </span>
+              )}
               {/* Notification Bell */}
               <NotificationBell />
             </div>
+
+            {/* Progress bar when any agent is running */}
+            {anyTabStreaming && (
+              <div className="shrink-0 h-0.5 w-full overflow-hidden bg-[var(--border)]">
+                <div className="h-full w-1/3 bg-indigo-500/70 rounded-full animate-[shimmer_1.5s_ease-in-out_infinite]" />
+              </div>
+            )}
 
             {/* Tab bar — only visible with 2+ tabs */}
             <ChatTabBar
@@ -970,7 +1024,7 @@ export default function Home() {
               onNew={handleNewChat}
             />
 
-            <div className="flex-1 overflow-y-auto px-4 py-8">
+            <div className="flex-1 overflow-y-auto px-3 sm:px-4 py-6 sm:py-8">
               <div className="max-w-2xl mx-auto">
                 {messages.map((msg, i) => (
                   <ChatMessage
@@ -1022,7 +1076,7 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="shrink-0 border-t border-[var(--border)] px-4 py-3">
+            <div className="shrink-0 px-4 py-3">
               <div className="max-w-2xl mx-auto">
                 <SearchBar onSend={handleSend} isStreaming={isStreaming} compact mode={mode} onModeChange={setMode} />
               </div>
@@ -1032,7 +1086,7 @@ export default function Home() {
 
         {/* Stats bar */}
         {!hasMessages && (
-          <div className="shrink-0 border-t border-[var(--border)] py-3 flex justify-center items-center gap-10 text-xs text-[var(--muted-foreground)]">
+          <div className="shrink-0 py-3 flex justify-center items-center gap-6 sm:gap-10 text-xs text-[var(--muted-foreground)]">
             <span
               className={`inline-block h-2 w-2 rounded-sm ${
                 serverStatus === "online"

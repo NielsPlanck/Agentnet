@@ -32,17 +32,21 @@ export function SourceCard({ result, selected, onSelect }: SourceCardProps) {
         selected ? "bg-[var(--muted)]" : "hover:bg-[var(--muted)]/50"
       }`}
     >
-      {/* Favicon — hidden if unavailable */}
-      {showFavicon && (
-        <div className="flex-shrink-0 mt-0.5 h-6 w-6 rounded-md overflow-hidden flex items-center justify-center bg-[var(--muted)]">
+      {/* Favicon or name initial fallback */}
+      <div className="flex-shrink-0 mt-0.5 h-6 w-6 rounded-md overflow-hidden flex items-center justify-center bg-[var(--muted)]">
+        {showFavicon ? (
           <img
             src={faviconUrl}
             alt=""
             className="h-4 w-4"
             onError={() => setFaviconFailed(true)}
           />
-        </div>
-      )}
+        ) : (
+          <span className="text-[0.6rem] font-semibold text-[var(--muted-foreground)] uppercase leading-none">
+            {name.slice(0, 2)}
+          </span>
+        )}
+      </div>
 
       {/* Content */}
       <div className="flex-1 min-w-0">

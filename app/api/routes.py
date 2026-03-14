@@ -296,8 +296,65 @@ async def ask(req: AskRequest, db: AsyncSession = Depends(get_db), user: User | 
     return AskResponse(query=req.query, answer=answer, sources=sources)
 
 
-async def _maybe_gather_apple_context(query: str) -> str:
-    """If the user's query mentions calendar/reminders/messages, fetch Apple data as context."""
+async def _try_google_calendar(request: Request, db: AsyncSession) -> str | None:
+    """Try to fetch Google Calendar events. Returns context string or None."""
+    try:
+        from app.api.session_utils import get_or_create_session
+        from app.models.user import OAuthConnection
+
+        session = await get_or_create_session(request, Response(), db)
+        if not session:
+            return None
+
+        result = await db.execute(
+            select(OAuthConnection).where(
+                OAuthConnection.session_id == session.id,
+                OAuthConnection.provider == "google",
+            )
+        )
+        conn = result.scalar_one_or_none()
+        if not conn:
+            return None
+
+        # Get valid token (refresh if needed)
+        from datetime import timezone
+        from app.services.oauth import encrypt_token
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        if conn.token_expires_at and conn.token_expires_at < now:
+            if not conn.refresh_token_enc:
+                return None
+            refresh_tok = decrypt_token(conn.refresh_token_enc)
+            new_tokens = await refresh_google_token(refresh_tok)
+            conn.access_token_enc = encrypt_token(new_tokens["access_token"])
+            conn.token_expires_at = now + timedelta(seconds=new_tokens.get("expires_in", 3600))
+            await db.commit()
+            token = new_tokens["access_token"]
+        else:
+            token = decrypt_token(conn.access_token_enc)
+
+        events = await list_events(token, days_ahead=3, max_results=15)
+        if not events:
+            return "### Google Calendar: No upcoming events in the next 3 days."
+
+        lines = ["### Google Calendar — Upcoming Events"]
+        for e in events:
+            start = e.get("start", "")
+            end = e.get("end", "")
+            line = f"- **{e['summary']}** | {start} → {end}"
+            if e.get("location"):
+                line += f" | Location: {e['location']}"
+            if e.get("attendees"):
+                line += f" | Attendees: {', '.join(e['attendees'][:3])}"
+            lines.append(line)
+        return "\n".join(lines)
+    except Exception as e:
+        log.debug("Google Calendar not available: %s", e)
+        return None
+
+
+async def _maybe_gather_context(query: str, request: Request | None = None, db: AsyncSession | None = None) -> str:
+    """Gather context from connected services (Google Calendar, Apple, etc.)."""
     q = query.lower()
     keywords_calendar = ["calendar", "schedule", "meeting", "event", "today", "tomorrow", "agenda", "what's on", "whats on", "busy", "free time", "availability"]
     keywords_reminder = ["reminder", "task", "todo", "to-do", "to do"]
@@ -321,25 +378,34 @@ async def _maybe_gather_apple_context(query: str) -> str:
     )
 
     now_str = datetime.now().strftime("%A, %B %d, %Y at %I:%M %p")
-    parts.append(f"## Apple Context (current time: {now_str})\n")
+    parts.append(f"## Live Context (current time: {now_str})\n")
 
     if need_calendar:
-        try:
-            events = await apple_calendar_list_events(days_ahead=3)
-            if events:
-                parts.append("### Upcoming Calendar Events")
-                for e in events[:12]:
-                    line = f"- **{e['title']}** | {e['start']} → {e['end']}"
-                    if e.get("location"):
-                        line += f" | Location: {e['location']}"
-                    if e.get("calendar"):
-                        line += f" | Calendar: {e['calendar']}"
-                    parts.append(line)
-            else:
-                parts.append("### Calendar: No upcoming events in the next 3 days.")
+        # Try Google Calendar first, fall back to Apple Calendar
+        gcal_ctx = None
+        if request and db:
+            gcal_ctx = await _try_google_calendar(request, db)
+
+        if gcal_ctx:
+            parts.append(gcal_ctx)
             parts.append("")
-        except Exception as e:
-            log.warning("Failed to fetch Apple calendar: %s", e)
+        else:
+            try:
+                events = await apple_calendar_list_events(days_ahead=3)
+                if events:
+                    parts.append("### Upcoming Calendar Events")
+                    for e in events[:12]:
+                        line = f"- **{e['title']}** | {e['start']} → {e['end']}"
+                        if e.get("location"):
+                            line += f" | Location: {e['location']}"
+                        if e.get("calendar"):
+                            line += f" | Calendar: {e['calendar']}"
+                        parts.append(line)
+                else:
+                    parts.append("### Calendar: No upcoming events in the next 3 days.")
+                parts.append("")
+            except Exception as e:
+                log.warning("Failed to fetch Apple calendar: %s", e)
 
     if need_reminders:
         try:
@@ -384,7 +450,7 @@ async def _maybe_gather_apple_context(query: str) -> str:
 
 
 @router.post("/ask/stream")
-async def ask_stream(req: AskRequest, db: AsyncSession = Depends(get_db), user: User | None = Depends(get_current_user_optional)):
+async def ask_stream(request: Request, req: AskRequest, db: AsyncSession = Depends(get_db), user: User | None = Depends(get_current_user_optional)):
     # ── Fetch URL content (all modes) ─────────────────────────────
     url_context, url_metadata = await _fetch_url_context(req.query)
 
@@ -431,10 +497,10 @@ async def ask_stream(req: AskRequest, db: AsyncSession = Depends(get_db), user: 
         except Exception as _meet_err:
             log.warning("Failed to inject meeting context: %s", _meet_err)
 
-    # ── Inject Apple context when relevant ─────────────────────────
-    apple_context = await _maybe_gather_apple_context(req.query)
-    if apple_context:
-        doc_context = (doc_context + "\n\n" + apple_context) if doc_context else apple_context
+    # ── Inject live context (Google Calendar, Apple, etc.) ─────────
+    live_context = await _maybe_gather_context(req.query, request, db)
+    if live_context:
+        doc_context = (doc_context + "\n\n" + live_context) if doc_context else live_context
 
     # ── Web-only mode ──────────────────────────────────────────────
     if req.mode == "web":

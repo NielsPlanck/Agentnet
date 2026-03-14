@@ -2299,15 +2299,16 @@ interface ChatMessageProps {
 }
 
 const MD_STYLES = [
-  "text-[0.95rem] leading-relaxed text-[var(--foreground)]",
-  "prose prose-sm max-w-none",
+  "text-[0.92rem] text-[var(--foreground)]",
+  "prose max-w-none",
+  "[&>*]:leading-[1.7]",
+  "prose-p:text-[0.92rem] prose-p:leading-[1.7] prose-p:mb-2.5 prose-p:mt-0",
   "prose-strong:text-[var(--foreground)] prose-strong:font-semibold",
   "prose-code:bg-[var(--muted)] prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-md prose-code:text-sm prose-code:font-mono",
   "prose-code:before:content-none prose-code:after:content-none",
   "prose-headings:text-[var(--foreground)]",
-  "prose-h3:text-base prose-h3:font-semibold prose-h3:mt-4 prose-h3:mb-1",
-  "prose-li:ml-0 prose-ul:my-2 prose-ol:my-2",
-  "prose-p:mb-2 prose-p:mt-0",
+  "prose-h3:text-base prose-h3:font-semibold prose-h3:mt-5 prose-h3:mb-1.5",
+  "prose-li:text-[0.92rem] prose-li:leading-[1.7] prose-li:ml-0 prose-ul:my-2 prose-ol:my-2",
   "prose-table:text-sm prose-th:text-left prose-th:font-semibold prose-th:pb-2",
   "prose-td:py-1.5 prose-td:pr-4",
   "prose-a:text-[var(--primary)] prose-a:no-underline hover:prose-a:underline",
@@ -2398,7 +2399,7 @@ export function ChatMessage({ role, content, sources, usedTool, images, document
   if (role === "user") {
     return (
       <div className="flex justify-end mb-6">
-        <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-[var(--primary)] text-[var(--primary-foreground)] px-4 py-2.5 text-[0.95rem] leading-relaxed">
+        <div className="max-w-[90%] sm:max-w-[80%] rounded-2xl rounded-br-sm bg-[var(--primary)] text-[var(--primary-foreground)] px-3 sm:px-4 py-2 sm:py-2.5 text-[0.88rem] sm:text-[0.95rem] leading-relaxed">
           {images && images.length > 0 && (
             <div className="flex gap-2 flex-wrap mb-2">
               {images.map((img, i) => (
@@ -2474,10 +2475,10 @@ export function ChatMessage({ role, content, sources, usedTool, images, document
 
   return (
     <div className="mb-6">
-      <div className="flex items-start gap-3">
+      <div className="flex items-start gap-2 sm:gap-3">
         {/* Iris avatar */}
-        <div className="flex-shrink-0 w-7 h-7 rounded-full bg-white border border-neutral-200 flex items-center justify-center mt-0.5 overflow-hidden">
-          <img src="/iris-logo.png" alt="Iris" className="w-5 h-5 object-contain" />
+        <div className="flex-shrink-0 w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-white border border-neutral-200 flex items-center justify-center mt-0.5 overflow-hidden">
+          <img src="/iris-logo.png" alt="Iris" className="w-4 h-4 sm:w-5 sm:h-5 object-contain" />
         </div>
 
         <div className="flex-1 min-w-0 pt-0.5">
@@ -2603,7 +2604,7 @@ export function ChatMessage({ role, content, sources, usedTool, images, document
                         setSelectedChoice(opt.letter);
                         onSendChoice?.(opt.fullLine);
                       }}
-                      className={`w-full flex items-center justify-between gap-3 rounded-xl border px-4 py-2.5 text-left text-sm transition-all ${
+                      className={`w-full flex items-center justify-between gap-2 sm:gap-3 rounded-xl border px-3 sm:px-4 py-2 sm:py-2.5 text-left text-[0.82rem] sm:text-sm transition-all ${
                         isChosen
                           ? "border-[var(--foreground)]/30 bg-[var(--muted)] font-medium"
                           : isDimmed
