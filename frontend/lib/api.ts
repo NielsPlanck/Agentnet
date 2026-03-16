@@ -108,6 +108,36 @@ export interface AgentError {
   message: string;
 }
 
+// ── Activity SSE Event (search, web search, thinking indicators) ──
+export interface ActivityEvent {
+  type: "activity";
+  action: "tool_search" | "web_search" | "thinking" | "generating";
+  status: "running" | "done";
+  detail: string;
+}
+
+// ── Tab Title SSE Event (smart chat tab naming) ──────────────────
+export interface TabTitleEvent {
+  type: "tab_title";
+  title: string;
+}
+
+// ── Artifact SSE Event (document, slides, sheet generation) ──────
+export interface ArtifactFile {
+  name: string;
+  size: number;
+  type: "markdown" | "html" | "pdf";
+}
+
+export interface ArtifactEvent {
+  type: "artifact";
+  artifact_id: string;
+  artifact_type: "document" | "slides" | "sheet";
+  title: string;
+  files: ArtifactFile[];
+  slides_count?: number;
+}
+
 type SSEMessage =
   | AskStreamToken
   | AskStreamSources
@@ -118,7 +148,10 @@ type SSEMessage =
   | AgentStatus
   | AgentFoundJob
   | AgentAsk
-  | AgentError;
+  | AgentError
+  | ArtifactEvent
+  | ActivityEvent
+  | TabTitleEvent;
 
 export interface ImagePayload {
   base64: string;

@@ -41,6 +41,7 @@ import {
   fetchCustomSkills,
   loadLocalCustomSkills,
   customToSkill,
+  getEnabledSkills,
   type CustomSkillData,
   type Skill,
 } from "@/lib/skills";
@@ -103,6 +104,10 @@ interface Message {
   // Proactive assistant
   appleActions?: { type: "calendar" | "reminder" | "note"; data: Record<string, string>; status: "created" | "pending" | "error" }[];
   routineSetup?: { name: string; schedule: string; status: "activated" | "pending" | "error" } | null;
+  // Artifacts (generated documents, slides, sheets)
+  artifact?: { artifact_id: string; artifact_type: string; title: string; files: { name: string; size: number; type: string }[]; slides_count?: number } | null;
+  // Activity indicators (searching, thinking, etc.)
+  activities?: { action: string; status: string; detail: string }[];
 }
 
 // ── Multi-tab types ───────────────────────────────────────────────
@@ -129,7 +134,7 @@ function createTab(label = "New Chat"): ChatTab {
   };
 }
 
-const MAX_TABS = 8;
+const MAX_TABS = 3;
 const TABS_KEY = "agentnet_chat_tabs";
 
 type VoiceState = "connecting" | "listening" | "speaking" | "error";
@@ -152,7 +157,7 @@ function ChatTabBar({
   if (tabs.length < 2) return null;
 
   return (
-    <div className="shrink-0 flex items-center gap-0.5 border-b border-[var(--border)] bg-[var(--card)] px-2 overflow-x-auto scrollbar-none">
+    <div className="shrink-0 flex items-center gap-1 border-b border-[var(--border)] bg-[var(--card)] px-3 py-1">
       {tabs.map((tab) => {
         const isActive = tab.id === activeTabId;
         return (
@@ -160,29 +165,34 @@ function ChatTabBar({
             key={tab.id}
             type="button"
             onClick={() => onSelect(tab.id)}
-            className={`group relative flex items-center gap-1.5 px-3 py-2 text-xs font-medium whitespace-nowrap transition-colors ${
+            className={`group relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
               isActive
-                ? "text-[var(--foreground)] border-b-2 border-indigo-500"
-                : "text-[var(--muted-foreground)] hover:text-[var(--foreground)] border-b-2 border-transparent"
+                ? "bg-[var(--muted)] text-[var(--foreground)]"
+                : "text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--muted)]/50"
             }`}
           >
-            {/* Streaming indicator */}
+            {/* Running / streaming indicator */}
             {tab.isStreaming && (
-              <span className="relative flex h-1.5 w-1.5 shrink-0">
-                <span className="absolute inline-flex h-full w-full rounded-full bg-indigo-500 opacity-75 animate-ping" />
-                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-indigo-500" />
+              <span className="relative flex h-2 w-2 shrink-0">
+                <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-75 animate-ping" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
               </span>
             )}
-            <span className="max-w-[140px] truncate">{tab.label}</span>
-            {/* Close button */}
-            <span
-              role="button"
-              tabIndex={-1}
-              onClick={(e) => { e.stopPropagation(); onClose(tab.id); }}
-              className="ml-1 p-0.5 rounded hover:bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] opacity-0 group-hover:opacity-100 transition-opacity"
-            >
-              <X className="h-3 w-3" />
-            </span>
+            <span className="max-w-[120px] truncate">{tab.label}</span>
+            {tab.isStreaming && (
+              <span className="text-[0.6rem] text-emerald-500 font-semibold ml-0.5">Running</span>
+            )}
+            {/* Close button — only show on hover for non-streaming tabs */}
+            {!tab.isStreaming && tabs.length > 1 && (
+              <span
+                role="button"
+                tabIndex={-1}
+                onClick={(e) => { e.stopPropagation(); onClose(tab.id); }}
+                className="ml-0.5 p-0.5 rounded hover:bg-[var(--border)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] opacity-0 group-hover:opacity-100 transition-opacity"
+              >
+                <X className="h-3 w-3" />
+              </span>
+            )}
           </button>
         );
       })}
@@ -192,7 +202,7 @@ function ChatTabBar({
         <button
           type="button"
           onClick={onNew}
-          className="p-1.5 ml-1 rounded hover:bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+          className="p-1 ml-0.5 rounded-md hover:bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
           title="New Chat"
         >
           <Plus className="h-3.5 w-3.5" />
@@ -269,6 +279,22 @@ export default function Home() {
   const [tabs, setTabs] = useState<ChatTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string>("");
 
+  // Refs always hold the latest values (updated eagerly, not just at render time)
+  const tabsRef = useRef(tabs);
+  const activeTabIdRef = useRef(activeTabId);
+
+  // Wrappers that keep refs + state in sync (refs update immediately, state triggers re-render)
+  const setActiveTabIdSync = useCallback((id: string) => {
+    activeTabIdRef.current = id;
+    setActiveTabId(id);
+  }, []);
+  const setTabsSync = useCallback((updater: ChatTab[] | ((prev: ChatTab[]) => ChatTab[])) => {
+    // Compute next state from ref (synchronous), update ref, THEN tell React
+    const next = typeof updater === "function" ? updater(tabsRef.current) : updater;
+    tabsRef.current = next;
+    setTabs(next);
+  }, []);
+
   // Derived state from active tab
   const activeTab = tabs.find((t) => t.id === activeTabId) || null;
   const messages = activeTab?.messages ?? [];
@@ -328,16 +354,17 @@ export default function Home() {
 
   // ── Tab helper ──────────────────────────────────────────────────
   const updateTab = useCallback((tabId: string, updater: (tab: ChatTab) => ChatTab) => {
-    setTabs((prev) => prev.map((t) => (t.id === tabId ? updater(t) : t)));
-  }, []);
+    setTabsSync((prev) => prev.map((t) => (t.id === tabId ? updater(t) : t)));
+  }, [setTabsSync]);
 
   const setMode = useCallback(
     (newMode: "agentnet" | "web" | "both") => {
-      if (activeTabId) {
-        updateTab(activeTabId, (t) => ({ ...t, mode: newMode }));
+      const curId = activeTabIdRef.current;
+      if (curId) {
+        updateTab(curId, (t) => ({ ...t, mode: newMode }));
       }
     },
-    [activeTabId, updateTab]
+    [updateTab]
   );
 
   // ── Restore tabs from sessionStorage on mount ───────────────────
@@ -349,8 +376,11 @@ export default function Home() {
       if (saved) {
         const parsed = JSON.parse(saved) as { tabs: ChatTab[]; activeTabId: string };
         if (parsed.tabs && parsed.tabs.length > 0) {
-          setTabs(parsed.tabs);
-          setActiveTabId(parsed.activeTabId || parsed.tabs[0].id);
+          // Reset isStreaming on all tabs — if page reloaded during streaming, it would be stuck forever
+          const restoredTabs = parsed.tabs.map((t: ChatTab) => ({ ...t, isStreaming: false }));
+          tabsRef.current = restoredTabs;
+          setTabs(restoredTabs);
+          setActiveTabIdSync(parsed.activeTabId || restoredTabs[0].id);
           return;
         }
       }
@@ -359,35 +389,42 @@ export default function Home() {
     }
     // Default: create one empty tab
     const first = createTab();
+    tabsRef.current = [first];
     setTabs([first]);
-    setActiveTabId(first.id);
+    setActiveTabIdSync(first.id);
   }, []);
 
-  // ── Save tabs to sessionStorage on every change ─────────────────
+  // ── Save tabs to sessionStorage (debounced to avoid blocking main thread) ──
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (!restoredRef.current) return;
-    try {
-      if (tabs.length > 0) {
-        // Strip heavy data to save space (keep only id, role, content, mode per message)
-        const toSave = {
-          tabs: tabs.slice(-10).map((t) => ({
-            ...t,
-            messages: t.messages.map((m) => ({
-              id: m.id,
-              role: m.role,
-              content: m.content,
-              mode: m.mode,
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      try {
+        if (tabs.length > 0) {
+          const toSave = {
+            tabs: tabs.slice(-10).map((t) => ({
+              ...t,
+              messages: t.messages.map((m) => ({
+                id: m.id,
+                role: m.role,
+                content: m.content,
+                mode: m.mode,
+              })),
             })),
-          })),
-          activeTabId,
-        };
-        sessionStorage.setItem(TABS_KEY, JSON.stringify(toSave));
-      } else {
-        sessionStorage.removeItem(TABS_KEY);
+            activeTabId,
+          };
+          sessionStorage.setItem(TABS_KEY, JSON.stringify(toSave));
+        } else {
+          sessionStorage.removeItem(TABS_KEY);
+        }
+      } catch {
+        // ignore quota errors
       }
-    } catch {
-      // ignore quota errors
-    }
+    }, 500); // 500ms debounce — writes happen after user stops typing
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
   }, [tabs, activeTabId]);
 
   useEffect(() => {
@@ -409,9 +446,9 @@ export default function Home() {
 
   // ── handleNewChat — creates a new tab ───────────────────────────
   const handleNewChat = useCallback(() => {
-    setTabs((prev) => {
+    setTabsSync((prev) => {
       // If current active tab is empty (no messages, not streaming), reuse it
-      const activeT = prev.find((t) => t.id === activeTabId);
+      const activeT = prev.find((t) => t.id === activeTabIdRef.current);
       if (activeT && activeT.messages.length === 0 && !activeT.isStreaming) {
         return prev; // already on an empty tab
       }
@@ -420,23 +457,23 @@ export default function Home() {
         const oldest = [...prev].filter((t) => !t.isStreaming).sort((a, b) => a.createdAt - b.createdAt)[0];
         if (oldest) {
           const newTab = createTab();
-          setActiveTabId(newTab.id);
+          setActiveTabIdSync(newTab.id);
           return prev.map((t) => (t.id === oldest.id ? newTab : t));
         }
         return prev;
       }
       const newTab = createTab();
-      setActiveTabId(newTab.id);
+      setActiveTabIdSync(newTab.id);
       return [...prev, newTab];
     });
-  }, [activeTabId]);
+  }, [setActiveTabIdSync, setTabsSync]);
 
   // ── handleLoadConversation — open in new tab or reuse ───────────
   const handleLoadConversation = useCallback(async (id: string) => {
     // Check if already open in a tab
-    const existing = tabs.find((t) => t.conversationId === id);
+    const existing = tabsRef.current.find((t) => t.conversationId === id);
     if (existing) {
-      setActiveTabId(existing.id);
+      setActiveTabIdSync(existing.id);
       return;
     }
 
@@ -451,9 +488,9 @@ export default function Home() {
       const firstUserMsg = loaded.find((m) => m.role === "user");
       const label = firstUserMsg ? firstUserMsg.content.slice(0, 30) : "Loaded Chat";
 
-      setTabs((prev) => {
+      setTabsSync((prev) => {
         // If active tab is empty, reuse it
-        const activeT = prev.find((t) => t.id === activeTabId);
+        const activeT = prev.find((t) => t.id === activeTabIdRef.current);
         if (activeT && activeT.messages.length === 0 && !activeT.isStreaming) {
           const updated: ChatTab = { ...activeT, messages: loaded, label, conversationId: id, error: "" };
           return prev.map((t) => (t.id === activeT.id ? updated : t));
@@ -463,63 +500,64 @@ export default function Home() {
           const oldest = [...prev].filter((t) => !t.isStreaming).sort((a, b) => a.createdAt - b.createdAt)[0];
           if (oldest) {
             const newTab: ChatTab = { ...createTab(label), messages: loaded, conversationId: id };
-            setActiveTabId(newTab.id);
+            setActiveTabIdSync(newTab.id);
             return prev.map((t) => (t.id === oldest.id ? newTab : t));
           }
           return prev;
         }
         const newTab: ChatTab = { ...createTab(label), messages: loaded, conversationId: id };
-        setActiveTabId(newTab.id);
+        setActiveTabIdSync(newTab.id);
         return [...prev, newTab];
       });
     } catch {
-      if (activeTabId) {
-        updateTab(activeTabId, (t) => ({ ...t, error: "Could not load conversation" }));
+      const curTabId = activeTabIdRef.current;
+      if (curTabId) {
+        updateTab(curTabId, (t) => ({ ...t, error: "Could not load conversation" }));
       }
     }
-  }, [tabs, activeTabId, updateTab]);
+  }, [updateTab, setActiveTabIdSync, setTabsSync]);
 
   // ── handleCloseTab ──────────────────────────────────────────────
   const handleCloseTab = useCallback((tabId: string) => {
-    setTabs((prev) => {
+    setTabsSync((prev) => {
       const tab = prev.find((t) => t.id === tabId);
       if (!tab) return prev;
 
       // If this is the only tab, replace with a fresh one
       if (prev.length === 1) {
         const fresh = createTab();
-        setActiveTabId(fresh.id);
+        setActiveTabIdSync(fresh.id);
         return [fresh];
       }
 
       const remaining = prev.filter((t) => t.id !== tabId);
       // If closing the active tab, switch to the nearest
-      if (tabId === activeTabId) {
+      if (tabId === activeTabIdRef.current) {
         const idx = prev.findIndex((t) => t.id === tabId);
         const nextIdx = Math.min(idx, remaining.length - 1);
-        setActiveTabId(remaining[nextIdx].id);
+        setActiveTabIdSync(remaining[nextIdx].id);
       }
       return remaining;
     });
-  }, [activeTabId]);
+  }, [setActiveTabIdSync, setTabsSync]);
 
   // ── handleSend — tab-scoped ─────────────────────────────────────
   const handleSend = useCallback(
     async (query: string, attachments?: ImageAttachment[]) => {
-      // Capture the tab ID at call time so state updates go to the right tab
-      const tabId = activeTabId;
-      const currentTab = tabs.find((t) => t.id === tabId);
-      if (!currentTab || currentTab.isStreaming) return;
+      // Read from refs (eagerly updated by setTabsSync / setActiveTabIdSync)
+      const tabId = activeTabIdRef.current;
+      const currentTab = tabsRef.current.find((t) => t.id === tabId);
+      if (!currentTab) { console.warn("handleSend: no active tab found", tabId, "tabs:", tabsRef.current.map(t => t.id.slice(0,8))); return; }
+      if (currentTab.isStreaming) { console.warn("handleSend: tab is already streaming", tabId); return; }
 
       const tabMode = currentTab.mode;
       const tabMessages = currentTab.messages;
 
       updateTab(tabId, (t) => ({ ...t, error: "" }));
 
-      // Auto-label: set tab label from first user message
+      // Set temporary label (overridden by tab_title SSE event from backend)
       if (tabMessages.length === 0) {
-        const label = query.length > 30 ? query.slice(0, 30) + "…" : query;
-        updateTab(tabId, (t) => ({ ...t, label }));
+        updateTab(tabId, (t) => ({ ...t, label: "Thinking…" }));
       }
 
       const imageAttachments = attachments?.filter((a) => a.type === "image" || a.mimeType.startsWith("image/")) ?? [];
@@ -583,10 +621,14 @@ export default function Home() {
         }));
       };
 
-      // Gather enabled custom skills to send as instructions
-      const enabledSkillPayloads: SkillPayload[] = customSkillsRef.current
+      // Gather enabled skills (custom + integration) to send as instructions
+      const customPayloads: SkillPayload[] = customSkillsRef.current
         .filter((s) => s.enabled && s.instructions?.trim())
         .map((s) => ({ id: s.id, name: s.name, instructions: s.instructions }));
+      const integrationPayloads: SkillPayload[] = getEnabledSkills()
+        .filter((s) => s.category === "integration" && s.instructions?.trim())
+        .map((s) => ({ id: s.id, name: s.name, instructions: s.instructions! }));
+      const enabledSkillPayloads = [...customPayloads, ...integrationPayloads];
 
       let finalContent = "";
       try {
@@ -602,6 +644,35 @@ export default function Home() {
             updateMsg(assistantId, (m) => ({ ...m, webSources: msg.sources }));
           } else if (msg.type === "url_sources") {
             updateMsg(assistantId, (m) => ({ ...m, urlSources: msg.sources }));
+          } else if (msg.type === "artifact") {
+            updateMsg(assistantId, (m) => ({
+              ...m,
+              artifact: {
+                artifact_id: (msg as { artifact_id: string }).artifact_id,
+                artifact_type: (msg as { artifact_type: string }).artifact_type,
+                title: (msg as { title: string }).title,
+                files: (msg as { files: { name: string; size: number; type: string }[] }).files,
+                slides_count: (msg as { slides_count?: number }).slides_count,
+              },
+            }));
+          } else if (msg.type === "activity") {
+            const act = msg as { action: string; status: string; detail: string };
+            updateMsg(assistantId, (m) => {
+              const activities = [...(m.activities || [])];
+              // Update existing activity of same action, or add new
+              const idx = activities.findIndex((a) => a.action === act.action);
+              if (idx >= 0) {
+                activities[idx] = { action: act.action, status: act.status, detail: act.detail };
+              } else {
+                activities.push({ action: act.action, status: act.status, detail: act.detail });
+              }
+              return { ...m, activities };
+            });
+          } else if (msg.type === "tab_title") {
+            const title = (msg as { title: string }).title;
+            if (title) {
+              updateTab(tabId, (t) => ({ ...t, label: title }));
+            }
           }
         }
         if (voiceActive && finalContent) {
@@ -853,7 +924,7 @@ export default function Home() {
         }
       }
     },
-    [tabs, activeTabId, updateTab, voiceActive, user, signupDismissed]
+    [updateTab, voiceActive, user, signupDismissed]
   );
 
   const hasMessages = messages.length > 0;
@@ -1019,7 +1090,7 @@ export default function Home() {
             <ChatTabBar
               tabs={tabs}
               activeTabId={activeTabId}
-              onSelect={setActiveTabId}
+              onSelect={setActiveTabIdSync}
               onClose={handleCloseTab}
               onNew={handleNewChat}
             />
@@ -1055,6 +1126,8 @@ export default function Home() {
                     jobAgentActive={msg.jobAgentActive}
                     appleActions={msg.appleActions}
                     routineSetup={msg.routineSetup}
+                    artifact={msg.artifact}
+                    activities={msg.activities}
                   />
                 ))}
 

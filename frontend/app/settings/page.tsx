@@ -31,6 +31,7 @@ import {
   deleteLocalCustomSkill,
   loadLocalCustomSkills,
   INTEGRATION_SKILLS,
+  INTEGRATION_OAUTH,
   loadSkillToggles,
   saveSkillToggle,
   type Skill as SkillDef,
@@ -70,6 +71,17 @@ import {
   Inbox,
   CalendarCheck,
   GitBranch,
+  Users,
+  Palette,
+  CreditCard,
+  ShoppingBag,
+  Database,
+  Headphones,
+  Layout,
+  Phone,
+  Send,
+  ExternalLink,
+  Link2,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { API_BASE } from "@/lib/config";
@@ -77,7 +89,9 @@ import { API_BASE } from "@/lib/config";
 type Tab = "general" | "account" | "privacy" | "usage" | "connectors" | "memory" | "skills";
 
 const CONNECTOR_ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
-  Globe, Search, Code2, TrendingUp, FileText, Mail, Cloud, Github, BookOpen, MessageCircle, Zap, Briefcase, Bell, Inbox, CalendarCheck, GitBranch,
+  Globe, Search, Code2, TrendingUp, FileText, Mail, Cloud, Github, BookOpen,
+  MessageCircle, Zap, Briefcase, Bell, Inbox, CalendarCheck, GitBranch,
+  Users, Palette, CreditCard, ShoppingBag, Database, Headphones, Layout, Phone, Send,
 };
 
 interface MemoryItem {
@@ -1468,82 +1482,93 @@ export default function SettingsPage() {
                 <section>
                   <h2 className="text-base font-semibold text-[var(--foreground)] mb-1">Integrations</h2>
                   <p className="text-sm text-[var(--muted-foreground)] mb-4">
-                    Enable third-party services to give Iris more capabilities.
-                  </p>
-                  <div className="space-y-1.5">
-                    {integrations.map((integ) => {
-                      const Icon = CONNECTOR_ICON_MAP[integ.icon] || Zap;
-                      return (
-                        <button
-                          key={integ.id}
-                          type="button"
-                          onClick={() => toggleIntegration(integ.id)}
-                          className="w-full flex items-center gap-3 p-3 rounded-xl border border-[var(--border)] hover:bg-[var(--muted)]/50 transition-colors text-left group"
-                        >
-                          <div className={`h-9 w-9 rounded-lg flex items-center justify-center shrink-0 transition-colors ${
-                            integ.enabled ? "bg-green-500/10 text-green-500" : "bg-[var(--muted)] text-[var(--muted-foreground)]"
-                          }`}>
-                            <Icon className="h-4.5 w-4.5" />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className={`text-sm font-medium ${integ.enabled ? "text-[var(--foreground)]" : "text-[var(--muted-foreground)]"}`}>
-                              {integ.name}
-                            </p>
-                            <p className="text-xs text-[var(--muted-foreground)] truncate">
-                              {integ.description}
-                            </p>
-                          </div>
-                          <div className={`h-5 w-9 rounded-full flex items-center shrink-0 transition-colors px-0.5 ${
-                            integ.enabled ? "bg-green-500 justify-end" : "bg-[var(--border)] justify-start"
-                          }`}>
-                            <div className="h-4 w-4 rounded-full bg-white shadow-sm" />
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </section>
-
-                {/* OAuth Connectors */}
-                <section>
-                  <h2 className="text-base font-semibold text-[var(--foreground)] mb-1">Connected accounts</h2>
-                  <p className="text-sm text-[var(--muted-foreground)] mb-4">
-                    Authorized services with API access.
+                    Connect third-party services to give Iris real access to your data.
                   </p>
                   {loadingConns ? (
-                    <div className="flex items-center gap-2 text-[var(--muted-foreground)] py-8">
+                    <div className="flex items-center gap-2 text-[var(--muted-foreground)] py-8 justify-center">
                       <Loader2 className="h-4 w-4 animate-spin" />
-                      <span className="text-sm">Loading...</span>
-                    </div>
-                  ) : connections.length === 0 ? (
-                    <div className="py-8 text-center border border-[var(--border)] rounded-xl">
-                      <p className="text-sm text-[var(--muted-foreground)]">No connected accounts</p>
-                      <p className="text-xs text-[var(--muted-foreground)] mt-1 opacity-60">
-                        Accounts are added when you authorize tools that need API access
-                      </p>
+                      <span className="text-sm">Loading connections...</span>
                     </div>
                   ) : (
                     <div className="space-y-1.5">
-                      {connections.map((c) => (
-                        <div
-                          key={c.id}
-                          className="flex items-center justify-between p-3 rounded-xl border border-[var(--border)]"
-                        >
-                          <div className="flex items-center gap-3">
-                            <div className="h-9 w-9 rounded-lg bg-[var(--muted)] flex items-center justify-center text-[var(--muted-foreground)]">
-                              <span className="text-sm font-semibold uppercase">{c.provider[0]}</span>
+                      {integrations.map((integ) => {
+                        const Icon = CONNECTOR_ICON_MAP[integ.icon] || Zap;
+                        const oauth = INTEGRATION_OAUTH[integ.id];
+                        const isConnected = oauth && connections.some((c) => c.provider === oauth.provider);
+                        const hasOAuth = oauth?.startPath != null;
+                        const isComingSoon = !hasOAuth;
+
+                        return (
+                          <div
+                            key={integ.id}
+                            className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-colors ${
+                              isConnected
+                                ? "border-green-500/30 bg-green-500/[0.03]"
+                                : "border-[var(--border)] hover:bg-[var(--muted)]/50"
+                            }`}
+                          >
+                            {/* Icon */}
+                            <div className={`h-9 w-9 rounded-lg flex items-center justify-center shrink-0 transition-colors ${
+                              isConnected
+                                ? "bg-green-500/15 text-green-500"
+                                : integ.enabled
+                                  ? "bg-[var(--foreground)]/10 text-[var(--foreground)]"
+                                  : "bg-[var(--muted)] text-[var(--muted-foreground)]"
+                            }`}>
+                              <Icon className="h-4.5 w-4.5" />
                             </div>
-                            <div>
-                              <p className="text-sm font-medium text-[var(--foreground)] capitalize">{c.provider}</p>
-                              <p className="text-xs text-[var(--muted-foreground)]">
-                                {c.tool_id}
-                                {c.expires_at && ` · Expires ${new Date(c.expires_at).toLocaleDateString()}`}
+
+                            {/* Name + description */}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <p className="text-sm font-medium text-[var(--foreground)]">
+                                  {integ.name}
+                                </p>
+                                {isConnected && (
+                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-green-500/15 text-[10px] font-medium text-green-500 uppercase tracking-wide">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                                    Connected
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-[var(--muted-foreground)] truncate">
+                                {integ.description}
                               </p>
                             </div>
+
+                            {/* Actions */}
+                            <div className="flex items-center gap-2 shrink-0">
+                              {isConnected ? (
+                                <>
+                                  {/* Toggle on/off */}
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleIntegration(integ.id)}
+                                    className={`h-5 w-9 rounded-full flex items-center shrink-0 transition-colors px-0.5 ${
+                                      integ.enabled ? "bg-green-500 justify-end" : "bg-[var(--border)] justify-start"
+                                    }`}
+                                    title={integ.enabled ? "Enabled — click to disable" : "Disabled — click to enable"}
+                                  >
+                                    <div className="h-4 w-4 rounded-full bg-white shadow-sm" />
+                                  </button>
+                                </>
+                              ) : hasOAuth ? (
+                                <a
+                                  href={`${API_BASE}${oauth!.startPath}`}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--foreground)] text-[var(--background)] text-xs font-medium hover:opacity-90 transition-opacity"
+                                >
+                                  <Link2 className="h-3 w-3" />
+                                  Connect
+                                </a>
+                              ) : (
+                                <span className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--border)] text-[10px] font-medium text-[var(--muted-foreground)] uppercase tracking-wide cursor-default">
+                                  Coming soon
+                                </span>
+                              )}
+                            </div>
                           </div>
-                          <span className="text-xs font-medium text-emerald-500">Connected</span>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </section>

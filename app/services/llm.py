@@ -156,6 +156,7 @@ Once you have all the info, move to STEP 4.
 
 STEP 4 — EXECUTE OR SIMULATE (once you have all inputs):
 IMPORTANT: If "Live Context" data is provided in your context (calendar events, reminders, messages, etc.), that data is REAL — use it directly. DO NOT simulate or make up fake data when real data is available.
+CRITICAL: If the Live Context says "NOT CONNECTED" for a service (e.g. Google Calendar), you MUST tell the user to connect/sign in first. NEVER fabricate or invent data for disconnected services. Do not say "your calendar is clear" or make up events — instead say the service is not connected and guide them to sign in.
 For tools without real data connections, simulate the tool execution with realistic data.
 When the user provides all the required details, show results (real when available, simulated otherwise).
 
@@ -242,17 +243,30 @@ Rules for [TABLE]:
 - rows: array of arrays — each inner array matches the columns order exactly
 - intro: shown above the table
 - caption: shown below (e.g. "Click any row for details. You can also export this list.")
-- Always include 5-10 rows of realistic, specific data
-- For company lists include: Company, Domain, Industry, HQ Location, Employees, Revenue, Funding Stage
+- CRITICAL: Generate AS MANY rows as the user requests. If they ask for 100, give 100. If they ask for 50, give 50. Default to 10-15 rows if no count specified.
+- For company/startup lists include: Company, Country, Stage, Raised, Sector, Investor, Crunchbase (link)
 - For people/contact lists include: Name, Title, Company, Location, Email, LinkedIn
+- Make data COMPREHENSIVE and REAL — use actual company names, real funding amounts, real investor names, real Crunchbase URLs
+- For funding data: include the actual amount raised (e.g. "$25M", "€15M"), the real lead investor name, and a working Crunchbase link like "https://crunchbase.com/organization/company-name"
+- NEVER truncate or limit results when the user asks for a specific number — give them ALL the rows they requested
 
 TABLE FOLLOW-UP INTERACTIONS — handle these user requests naturally:
-- "Add more" / "Load more" / "Show more results" → output a NEW [TABLE] with 10 additional rows (different companies/people), continuing the same search. Say "Here are 10 more:" before the block.
+- "Add more" / "Load more" / "Show more results" → output a NEW [TABLE] with 20-50 additional rows (different companies/people), continuing the same search. Say "Here are more:" before the block.
 - "Enrich this list" / "Add founder / email / LinkedIn" → output a NEW [TABLE] with the same rows but MORE columns added (Founder, LinkedIn URL, Email). Keep all previous data.
 - "Tell me more about [Company]" / user clicks a row → respond conversationally about that specific company. Include: what they do, who the founders are, recent funding details, why they might be relevant. Then offer: "Want me to find the key contacts at [Company]?"
 - "Find contact / founder at [Company]" → output a small [TABLE] with columns: Name, Title, Email, LinkedIn, for 2-3 key people at that company.
 - "Filter by [criteria]" → output a NEW [TABLE] with only matching rows.
 - Always remember the context of the previous table so follow-ups feel seamless.
+
+IMPORTANT — DATA COMPREHENSIVENESS:
+When the user asks for a LIST of companies, startups, VCs, people, etc. with a specific COUNT:
+- ALWAYS provide the FULL count they asked for. "100 startups" means 100 rows. "50 VCs" means 50 rows.
+- Use REAL, SPECIFIC data — actual company names that exist, real funding amounts, real investors, real Crunchbase URLs
+- For Crunchbase links: always use format "https://crunchbase.com/organization/company-name-slug"
+- For funding amounts: use real numbers with currency (e.g. "$25M", "€10M", "£8M")
+- For investors: use real investor/VC firm names (Sequoia, a16z, Index Ventures, Accel, etc.)
+- NEVER say "here are the first 10, want me to load more?" — just provide ALL rows at once
+- The UI supports search, filters, and scrolling for large tables — so 100 rows is fine
 
 Make the data REAL and SPECIFIC — actual model names, real prices, real airline names, real restaurant names.
 
@@ -584,7 +598,16 @@ Rules for proactive assistant:
 - Always confirm what you created: "I created a calendar event for..." or "Your morning briefing routine is set up..."
 - For one-shot routines, the schedule_type is "one_shot" and the schedule_value is an ISO datetime.
 
-Format: clean markdown, **bold** tool names, `code` for action names. NEVER use markdown tables — use A) B) C) lettered lists instead so they render as interactive buttons."""
+Format: clean markdown, **bold** tool names, `code` for action names. NEVER use markdown tables — use A) B) C) lettered lists instead so they render as interactive buttons.
+
+FINAL ENFORCEMENT — OUTPUT COMPLETENESS (READ THIS LAST, HIGHEST PRIORITY):
+When the user requests a specific number of items (e.g. "100 startups", "50 VCs", "200 companies"):
+1. You MUST output EVERY SINGLE ROW they asked for. No exceptions. No shortcuts.
+2. NEVER output only 10 or 20 rows and say "here are the first 10" or "want me to load more?" — output ALL rows in ONE [TABLE] block.
+3. If the user says "100", your [TABLE] rows array MUST contain exactly 100 entries. Count them.
+4. The output token limit is 32,768 — that is enough for 200+ table rows. You have plenty of room.
+5. Each row should have REAL data: real company names, real amounts, real investors, real URLs.
+6. This is NON-NEGOTIABLE. Incomplete tables are a critical failure."""
 
 
 def _get_gemini_client() -> genai.Client:
@@ -618,6 +641,20 @@ def _build_context(results: list[SearchResultItem]) -> str:
     return "\n".join(lines)
 
 
+def _extract_requested_count(query: str) -> int | None:
+    """Extract a numeric count from queries like '100 startups', 'list of 50 VCs', 'give me 200 companies'."""
+    import re
+    # Match patterns like "100 startups", "list of 50", "give me 200", "top 30"
+    m = re.search(r'\b(\d{2,4})\s+(?:recent|last|latest|top|best|new|)?\s*(?:startups?|companies|vcs?|investors?|firms?|funds?|people|contacts?|leads?|results?|entries|items|rows)', query, re.IGNORECASE)
+    if m:
+        return int(m.group(1))
+    # Also match "list of 100", "top 50"
+    m = re.search(r'\b(?:list|top|find|get|show|give|make)\s+(?:me\s+)?(?:a\s+)?(?:list\s+of\s+)?(\d{2,4})\b', query, re.IGNORECASE)
+    if m:
+        return int(m.group(1))
+    return None
+
+
 def _build_gemini_contents(
     query: str,
     results: list[SearchResultItem],
@@ -637,6 +674,11 @@ def _build_gemini_contents(
     # Current query with search context + URL content + document context
     context = _build_context(results)
     user_text = f"{query}\n\n---\n\n{context}"
+
+    # Inject count enforcement when user requests a specific number of items
+    requested_count = _extract_requested_count(query)
+    if requested_count and requested_count > 10:
+        user_text += f"\n\n---\n\nIMPORTANT INSTRUCTION: The user explicitly requested {requested_count} items. Your [TABLE] block MUST contain exactly {requested_count} rows. Do NOT output fewer rows. Do NOT say 'here are the first N'. Output all {requested_count} rows in a single [TABLE] block. You have 32,768 output tokens available — that is more than enough."
     if url_context:
         user_text += f"\n\n---\n\nFetched URL content:\n\n{url_context}"
     if doc_context:
@@ -699,7 +741,7 @@ async def ask_agentnet(
         contents=contents,
         config=types.GenerateContentConfig(
             system_instruction=prompt,
-            max_output_tokens=4096,
+            max_output_tokens=32768,
         ),
     )
     return response.text or ""
@@ -728,7 +770,7 @@ async def ask_agentnet_stream(
         contents=contents,
         config=types.GenerateContentConfig(
             system_instruction=prompt,
-            max_output_tokens=4096,
+            max_output_tokens=32768,
         ),
     )
     async for chunk in stream:
@@ -741,7 +783,23 @@ WEB_SYSTEM_PROMPT = """You are a helpful web search assistant. Answer the user's
 - Use clean markdown formatting. Use **bold** for key facts.
 - For lists of results, use bullet points or numbered lists.
 - Base your answer on the search results. Do not make up information.
-- NEVER use emojis. Keep language professional and clear."""
+- NEVER use emojis. Keep language professional and clear.
+
+For DATA-HEAVY requests (lists of companies, startups, VCs, people, contacts, funding rounds, etc.), use the [TABLE] block format:
+
+[TABLE]
+{"intro": "Brief description", "columns": ["Col1", "Col2", "Col3"], "rows": [
+  ["val1", "val2", "val3"],
+  ["val4", "val5", "val6"]
+], "caption": "Optional footer text"}
+[/TABLE]
+
+CRITICAL TABLE RULES:
+- When the user requests a specific number (e.g. "100 startups", "50 VCs"), output EXACTLY that many rows.
+- NEVER truncate. NEVER say "here are the first 10". Output ALL rows in one [TABLE] block.
+- Use real company names, real funding amounts, real investor names, real Crunchbase URLs.
+- For startup/company lists: include Company, Country, Stage, Raised, Sector, Investor, Crunchbase link columns.
+- You have 32,768 output tokens — enough for 200+ rows. Use them."""
 
 
 async def ask_web_stream(
@@ -784,6 +842,11 @@ async def ask_web_stream(
     if doc_context:
         user_text += f"\n\n---\nUploaded document content:\n\n{doc_context}"
 
+    # Inject count enforcement for web mode too
+    requested_count = _extract_requested_count(query)
+    if requested_count and requested_count > 10:
+        user_text += f"\n\n---\n\nIMPORTANT INSTRUCTION: The user explicitly requested {requested_count} items. Your [TABLE] block MUST contain exactly {requested_count} rows. Do NOT output fewer rows. Do NOT say 'here are the first N'. Output all {requested_count} rows in a single [TABLE] block. You have 32,768 output tokens available — that is more than enough."
+
     parts: list[types.Part] = [types.Part.from_text(text=user_text)]
     if images:
         for img in images:
@@ -799,7 +862,7 @@ async def ask_web_stream(
         contents=contents,
         config=types.GenerateContentConfig(
             system_instruction=WEB_SYSTEM_PROMPT,
-            max_output_tokens=2048,
+            max_output_tokens=32768,
         ),
     )
     async for chunk in stream:

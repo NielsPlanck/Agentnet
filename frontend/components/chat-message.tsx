@@ -8,7 +8,7 @@ import type { SearchResultItem, WebSource, UrlSource, ChatMessage as ChatMsg } f
 import { sendFeedback, suggestTool, streamAsk } from "@/lib/api";
 import { API_BASE } from "@/lib/config";
 import { SourceCard } from "@/components/source-card";
-import { ChevronRight, ChevronDown, ThumbsUp, ThumbsDown, Plus, X, Check, Calendar, Clock, Minus, Zap, ExternalLink, Globe, Loader2, Maximize2, Minimize2, Sheet, Columns, Bell, StickyNote, ListChecks, CalendarPlus, Timer, Inbox, AlertTriangle, Star, Mail, Send, MessageSquare, Users, FileText, CalendarCheck } from "lucide-react";
+import { ChevronRight, ChevronDown, ThumbsUp, ThumbsDown, Plus, X, Check, Calendar, Clock, Minus, Zap, ExternalLink, Globe, Loader2, Maximize2, Minimize2, Sheet, Columns, Bell, StickyNote, ListChecks, CalendarPlus, Timer, Inbox, AlertTriangle, Star, Mail, Send, MessageSquare, Users, FileText, CalendarCheck, Download, Presentation, Search, Filter } from "lucide-react";
 
 /** Strip [TOOL:#N] metadata tag from the start of assistant content */
 function stripToolTag(content: string): string {
@@ -582,6 +582,120 @@ function renderCell(value: string | number | null): React.ReactNode {
   return str;
 }
 
+/** Color palette for sector/category badges */
+const BADGE_COLORS: Record<string, { bg: string; text: string }> = {
+  "ai": { bg: "bg-purple-500/20", text: "text-purple-400" },
+  "healthcare": { bg: "bg-emerald-500/20", text: "text-emerald-400" },
+  "fintech": { bg: "bg-blue-500/20", text: "text-blue-400" },
+  "saas": { bg: "bg-indigo-500/20", text: "text-indigo-400" },
+  "cybersecurity": { bg: "bg-red-500/20", text: "text-red-400" },
+  "biotech": { bg: "bg-green-500/20", text: "text-green-400" },
+  "edtech": { bg: "bg-yellow-500/20", text: "text-yellow-400" },
+  "energy": { bg: "bg-orange-500/20", text: "text-orange-400" },
+  "robotics": { bg: "bg-cyan-500/20", text: "text-cyan-400" },
+  "space": { bg: "bg-violet-500/20", text: "text-violet-400" },
+  "climate": { bg: "bg-teal-500/20", text: "text-teal-400" },
+  "deeptech": { bg: "bg-fuchsia-500/20", text: "text-fuchsia-400" },
+  "logistics": { bg: "bg-amber-500/20", text: "text-amber-400" },
+  "e-commerce": { bg: "bg-pink-500/20", text: "text-pink-400" },
+  "food": { bg: "bg-lime-500/20", text: "text-lime-400" },
+  "proptech": { bg: "bg-sky-500/20", text: "text-sky-400" },
+  "legaltech": { bg: "bg-slate-500/20", text: "text-slate-400" },
+  "insurtech": { bg: "bg-rose-500/20", text: "text-rose-400" },
+  "gaming": { bg: "bg-violet-500/20", text: "text-violet-400" },
+  "defense": { bg: "bg-zinc-500/20", text: "text-zinc-400" },
+  "construction": { bg: "bg-stone-500/20", text: "text-stone-400" },
+  "enterprise": { bg: "bg-blue-500/20", text: "text-blue-400" },
+  "data": { bg: "bg-indigo-500/20", text: "text-indigo-400" },
+  "developer tools": { bg: "bg-gray-500/20", text: "text-gray-400" },
+  "infrastructure": { bg: "bg-slate-500/20", text: "text-slate-400" },
+};
+
+/** Check if a column likely contains categorical/tag data */
+function isBadgeColumn(colName: string): boolean {
+  const lower = colName.toLowerCase();
+  return ["sector", "industry", "category", "stage", "funding stage", "type", "status", "tag", "vertical"].includes(lower);
+}
+
+/** Get badge color for a value */
+function getBadgeColor(value: string): { bg: string; text: string } {
+  const lower = value.toLowerCase();
+  for (const [key, color] of Object.entries(BADGE_COLORS)) {
+    if (lower.includes(key)) return color;
+  }
+  // Fallback: hash-based color
+  const hash = lower.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
+  const fallbacks = [
+    { bg: "bg-purple-500/20", text: "text-purple-400" },
+    { bg: "bg-blue-500/20", text: "text-blue-400" },
+    { bg: "bg-emerald-500/20", text: "text-emerald-400" },
+    { bg: "bg-amber-500/20", text: "text-amber-400" },
+    { bg: "bg-rose-500/20", text: "text-rose-400" },
+    { bg: "bg-cyan-500/20", text: "text-cyan-400" },
+    { bg: "bg-indigo-500/20", text: "text-indigo-400" },
+    { bg: "bg-teal-500/20", text: "text-teal-400" },
+  ];
+  return fallbacks[hash % fallbacks.length];
+}
+
+/** Check if a column contains monetary values */
+function isMoneyColumn(colName: string): boolean {
+  const lower = colName.toLowerCase();
+  return ["raised", "funding", "amount", "revenue", "valuation", "total raised", "last funding", "investment"].some(k => lower.includes(k));
+}
+
+/** Compute summary stats for the table */
+function computeStats(columns: string[], rows: (string | number | null)[][]): { totalRaised: string | null; topSectors: string[] } {
+  let totalRaised: number | null = null;
+  const sectorCounts: Record<string, number> = {};
+
+  columns.forEach((col, ci) => {
+    const lower = col.toLowerCase();
+    // Sum monetary columns
+    if (isMoneyColumn(col)) {
+      rows.forEach(row => {
+        const val = String(row[ci] ?? "");
+        const match = val.match(/[\$€£]?([\d,.]+)\s*(M|B|K|million|billion)?/i);
+        if (match) {
+          let num = parseFloat(match[1].replace(/,/g, ""));
+          const unit = (match[2] || "").toUpperCase();
+          if (unit === "B" || unit === "BILLION") num *= 1000;
+          else if (unit === "K") num /= 1000;
+          // Assume M/million if no unit and number is small
+          totalRaised = (totalRaised || 0) + num;
+        }
+      });
+    }
+    // Count sectors
+    if (isBadgeColumn(col)) {
+      rows.forEach(row => {
+        const val = String(row[ci] ?? "").trim();
+        if (val && val !== "—") {
+          // Split by comma for multi-sector
+          val.split(/[,;]/).forEach(s => {
+            const trimmed = s.trim();
+            if (trimmed) sectorCounts[trimmed] = (sectorCounts[trimmed] || 0) + 1;
+          });
+        }
+      });
+    }
+  });
+
+  const topSectors = Object.entries(sectorCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([name]) => name);
+
+  let totalStr: string | null = null;
+  if (totalRaised !== null && totalRaised > 0) {
+    const tr = totalRaised as number;
+    if (tr >= 1000) totalStr = `$${(tr / 1000).toFixed(1)}B+`;
+    else totalStr = `$${Math.round(tr)}M+`;
+  }
+
+  return { totalRaised: totalStr, topSectors };
+}
+
 function DataTable({ block, onAction, fetchMoreContext }: {
   block: TableBlock;
   onAction: (msg: string) => void;
@@ -595,6 +709,9 @@ function DataTable({ block, onAction, fetchMoreContext }: {
   const [showAddCol, setShowAddCol] = useState(false);
   const [addColValue, setAddColValue] = useState("");
   const [loadingLabel, setLoadingLabel] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeFilters, setActiveFilters] = useState<Record<number, string>>({});
+  const [showFilterFor, setShowFilterFor] = useState<number | null>(null);
 
   // ESC to close fullscreen
   useEffect(() => {
@@ -719,6 +836,90 @@ function DataTable({ block, onAction, fetchMoreContext }: {
     }
   };
 
+  // Compute filtered rows
+  const filteredRows = (() => {
+    let rows = allRows;
+    // Apply search
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      rows = rows.filter(row => row.some(cell => String(cell ?? "").toLowerCase().includes(q)));
+    }
+    // Apply column filters
+    Object.entries(activeFilters).forEach(([colIdx, filterVal]) => {
+      if (filterVal) {
+        const ci = parseInt(colIdx);
+        rows = rows.filter(row => {
+          const cellVal = String(row[ci] ?? "").toLowerCase();
+          return cellVal.includes(filterVal.toLowerCase());
+        });
+      }
+    });
+    return rows;
+  })();
+
+  // Detect which columns should show badges
+  const badgeColumnIndices = allColumns.map((col, i) => isBadgeColumn(col) ? i : -1).filter(i => i >= 0);
+  const moneyColumnIndices = allColumns.map((col, i) => isMoneyColumn(col) ? i : -1).filter(i => i >= 0);
+
+  // Compute stats
+  const stats = computeStats(allColumns, allRows);
+
+  // Get unique values for filter dropdowns
+  const getUniqueValues = (colIdx: number): string[] => {
+    const vals = new Set<string>();
+    allRows.forEach(row => {
+      const v = String(row[colIdx] ?? "").trim();
+      if (v && v !== "—") {
+        // Split multi-value cells
+        v.split(/[,;]/).forEach(s => { const t = s.trim(); if (t) vals.add(t); });
+      }
+    });
+    return Array.from(vals).sort();
+  };
+
+  // Render a cell with badge support
+  const renderCellEnhanced = (cell: string | number | null, colIdx: number): React.ReactNode => {
+    if (cell === null || cell === undefined) return "—";
+    const str = String(cell);
+
+    // Badge columns: render as colored pills
+    if (badgeColumnIndices.includes(colIdx) && str && str !== "—") {
+      const parts = str.split(/[,;]/).map(s => s.trim()).filter(Boolean);
+      return (
+        <div className="flex flex-wrap gap-1">
+          {parts.map((part, i) => {
+            const color = getBadgeColor(part);
+            return (
+              <span key={i} className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-[0.6rem] font-medium ${color.bg} ${color.text}`}>
+                {part}
+              </span>
+            );
+          })}
+        </div>
+      );
+    }
+
+    // Money columns: bold green
+    if (moneyColumnIndices.includes(colIdx) && str && str !== "—") {
+      return <span className="font-semibold text-emerald-400">{str}</span>;
+    }
+
+    // URLs
+    const isUrl = /^https?:\/\//.test(str) || /^linkedin\.com\//.test(str) || /^www\./.test(str) || /^crunchbase\.com\//.test(str);
+    if (isUrl) {
+      const href = /^https?:\/\//.test(str) ? str : `https://${str}`;
+      const display = str.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "");
+      const short = display.length > 30 ? display.slice(0, 27) + "…" : display;
+      return (
+        <a href={href} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="text-blue-400 hover:text-blue-300 hover:underline">
+          {short}
+        </a>
+      );
+    }
+
+    return str;
+  };
+
   // Shared table render used in both inline and fullscreen
   const renderTable = (isFullscreen: boolean) => (
     <div className={`rounded-xl border border-[var(--border)] overflow-hidden ${isFullscreen ? "flex-1" : ""}`}>
@@ -729,13 +930,35 @@ function DataTable({ block, onAction, fetchMoreContext }: {
               <th className={`${isFullscreen ? "px-4 py-3" : "px-3 py-2"} text-left font-medium text-[var(--muted-foreground)] w-8`}>#</th>
               {allColumns.map((col, i) => (
                 <th key={i} className={`${isFullscreen ? "px-4 py-3 text-[0.7rem]" : "px-3 py-2 text-[0.6rem]"} text-left font-medium text-[var(--muted-foreground)] uppercase tracking-wide whitespace-nowrap`}>
-                  {col}
+                  <div className="flex items-center gap-1">
+                    {col}
+                    {isBadgeColumn(col) && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setShowFilterFor(showFilterFor === i ? null : i); }}
+                        className={`p-0.5 rounded hover:bg-[var(--muted)] ${activeFilters[i] ? "text-blue-400" : "text-[var(--muted-foreground)]"}`}
+                      >
+                        <Filter className="h-2.5 w-2.5" />
+                      </button>
+                    )}
+                  </div>
+                  {showFilterFor === i && (
+                    <div className="absolute mt-1 z-20 bg-[var(--card)] border border-[var(--border)] rounded-lg shadow-xl p-1.5 min-w-[120px] max-h-[200px] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+                      <button onClick={() => { setActiveFilters(f => { const n = {...f}; delete n[i]; return n; }); setShowFilterFor(null); }} className="block w-full text-left px-2 py-1 text-[0.65rem] rounded hover:bg-[var(--muted)] text-[var(--muted-foreground)]">
+                        All
+                      </button>
+                      {getUniqueValues(i).map(val => (
+                        <button key={val} onClick={() => { setActiveFilters(f => ({...f, [i]: val})); setShowFilterFor(null); }} className={`block w-full text-left px-2 py-1 text-[0.65rem] rounded hover:bg-[var(--muted)] ${activeFilters[i] === val ? "text-blue-400 font-medium" : "text-[var(--foreground)]"}`}>
+                          {val}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {allRows.map((row, ri) => (
+            {filteredRows.map((row, ri) => (
               <tr
                 key={ri}
                 onClick={() => handleRowClick(row, ri)}
@@ -746,7 +969,7 @@ function DataTable({ block, onAction, fetchMoreContext }: {
                 <td className={`${isFullscreen ? "px-4 py-3" : "px-3 py-2.5"} text-[var(--muted-foreground)] tabular-nums select-text`}>{ri + 1}</td>
                 {row.map((cell, ci) => (
                   <td key={ci} className={`${isFullscreen ? "px-4 py-3" : "px-3 py-2.5"} whitespace-nowrap select-text ${ci === 0 ? "font-medium text-[var(--foreground)]" : "text-[var(--muted-foreground)]"}`}>
-                    {renderCell(cell)}
+                    {renderCellEnhanced(cell, ci)}
                   </td>
                 ))}
               </tr>
@@ -891,12 +1114,48 @@ function DataTable({ block, onAction, fetchMoreContext }: {
 
   return (
     <div className="mt-3">
-      {/* Header row: intro + count */}
-      <div className="flex items-center justify-between mb-2">
-        {block.intro && (
-          <p className="text-sm text-[var(--muted-foreground)]">{block.intro}</p>
-        )}
-        <span className="text-[0.65rem] text-[var(--muted-foreground)] ml-auto">
+      {/* Search bar */}
+      <div className="mb-3">
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[var(--muted-foreground)]" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search company, country, sector…"
+            className="w-full text-xs pl-8 pr-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--card)] text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] outline-none focus:border-[var(--foreground)]/30"
+          />
+        </div>
+      </div>
+
+      {/* Active filter pills */}
+      {Object.keys(activeFilters).length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {Object.entries(activeFilters).map(([colIdx, val]) => (
+            <span key={colIdx} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[0.65rem] bg-blue-500/20 text-blue-400">
+              {allColumns[parseInt(colIdx)]}: {val}
+              <button onClick={() => setActiveFilters(f => { const n = {...f}; delete n[parseInt(colIdx)]; return n; })} className="hover:text-blue-300">
+                <X className="h-2.5 w-2.5" />
+              </button>
+            </span>
+          ))}
+          <button onClick={() => setActiveFilters({})} className="text-[0.65rem] text-[var(--muted-foreground)] hover:text-[var(--foreground)]">Clear all</button>
+        </div>
+      )}
+
+      {/* Stats header */}
+      <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-[var(--foreground)] font-medium">
+            Showing {filteredRows.length} {filteredRows.length !== allRows.length ? `of ${allRows.length}` : ""} startups
+          </span>
+          {stats.totalRaised && (
+            <span className="text-xs text-[var(--muted-foreground)]">
+              Total raised <span className="font-semibold text-emerald-400">{stats.totalRaised}</span>
+            </span>
+          )}
+        </div>
+        <span className="text-[0.65rem] text-[var(--muted-foreground)]">
           {allRows.length} results
         </span>
       </div>
@@ -2296,6 +2555,10 @@ interface ChatMessageProps {
   // Proactive assistant
   appleActions?: { type: "calendar" | "reminder" | "note"; data: Record<string, string>; status: "created" | "pending" | "error" }[];
   routineSetup?: { name: string; schedule: string; status: "activated" | "pending" | "error" } | null;
+  // Generated artifacts (documents, slides, sheets)
+  artifact?: { artifact_id: string; artifact_type: string; title: string; files: { name: string; size: number; type: string }[]; slides_count?: number } | null;
+  // Activity indicators
+  activities?: { action: string; status: string; detail: string }[];
 }
 
 const MD_STYLES = [
@@ -2377,7 +2640,7 @@ function SuggestToolForm({ onClose }: { onClose: () => void }) {
   );
 }
 
-export function ChatMessage({ role, content, sources, usedTool, images, documents, webSources, urlSources, mode, isStreaming, onSendChoice, fetchMoreContext, browserScreenshots, agentStatus, foundJobs, agentQuestion, jobAgentActive, appleActions, routineSetup }: ChatMessageProps) {
+export function ChatMessage({ role, content, sources, usedTool, images, documents, webSources, urlSources, mode, isStreaming, onSendChoice, fetchMoreContext, browserScreenshots, agentStatus, foundJobs, agentQuestion, jobAgentActive, appleActions, routineSetup, artifact, activities }: ChatMessageProps) {
   const [selectedToolId, setSelectedToolId] = useState<string | null>(null);
   const [vote, setVote] = useState<"up" | "down" | null>(null);
   const [showSuggest, setShowSuggest] = useState(false);
@@ -2508,6 +2771,34 @@ export function ChatMessage({ role, content, sources, usedTool, images, document
               })}
             </div>
           )}
+
+          {/* Activity indicators (searching, thinking, etc.) */}
+          {activities && activities.length > 0 && (() => {
+            // When not streaming, only show completed activities (hide running spinners)
+            const visible = isStreaming
+              ? activities
+              : activities.filter((a) => a.status === "done");
+            if (visible.length === 0) return null;
+            return (
+              <div className="flex flex-col gap-1 mb-2.5">
+                {visible.map((act, i) => (
+                  <div key={i} className="flex items-center gap-1.5 text-[0.72rem] text-[var(--muted-foreground)]">
+                    {act.status === "running" ? (
+                      <Loader2 className="h-3 w-3 animate-spin text-indigo-500" />
+                    ) : act.action === "web_search" ? (
+                      <Globe className="h-3 w-3 text-emerald-500" />
+                    ) : act.action === "tool_search" ? (
+                      <Zap className="h-3 w-3 text-amber-500" />
+                    ) : (
+                      <Check className="h-3 w-3 text-emerald-500" />
+                    )}
+                    <span>{act.detail}</span>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+
           {isWeb ? (
             <>
               <div className={MD_STYLES}>
@@ -2993,6 +3284,53 @@ export function ChatMessage({ role, content, sources, usedTool, images, document
               {routineSetup.status === "error" && (
                 <span className="text-[0.65rem] text-red-500 font-medium">Failed</span>
               )}
+            </div>
+          )}
+
+          {/* Artifact Download Card */}
+          {artifact && (
+            <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--card)] overflow-hidden">
+              <div className="px-4 py-3 border-b border-[var(--border)] flex items-center gap-2.5">
+                {artifact.artifact_type === "slides" ? (
+                  <Presentation className="h-5 w-5 text-violet-500" />
+                ) : (
+                  <FileText className="h-5 w-5 text-blue-500" />
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold text-[var(--foreground)] truncate">{artifact.title}</div>
+                  <div className="text-[0.7rem] text-[var(--muted-foreground)]">
+                    {artifact.artifact_type === "document" ? "Document" : artifact.artifact_type === "slides" ? `Presentation${artifact.slides_count ? ` (${artifact.slides_count} slides)` : ""}` : "Sheet"}
+                    {" — "}
+                    {artifact.files.length} file{artifact.files.length > 1 ? "s" : ""} generated
+                  </div>
+                </div>
+              </div>
+              <div className="px-4 py-2.5 flex flex-wrap gap-2">
+                {artifact.files.map((file, i) => {
+                  const downloadUrl = `${API_BASE}/v1/artifacts/${artifact.artifact_id}/${file.name}`;
+                  const ext = file.name.split(".").pop()?.toUpperCase() || "FILE";
+                  const sizeKB = Math.round(file.size / 1024);
+                  const isHtml = file.type === "html";
+                  return (
+                    <a
+                      key={i}
+                      href={downloadUrl}
+                      target={isHtml ? "_blank" : undefined}
+                      download={isHtml ? undefined : file.name}
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[var(--border)] hover:bg-[var(--muted)] transition-colors text-xs group"
+                    >
+                      {isHtml ? (
+                        <ExternalLink className="h-3.5 w-3.5 text-[var(--muted-foreground)] group-hover:text-[var(--primary)]" />
+                      ) : (
+                        <Download className="h-3.5 w-3.5 text-[var(--muted-foreground)] group-hover:text-[var(--primary)]" />
+                      )}
+                      <span className="font-medium text-[var(--foreground)]">{ext}</span>
+                      <span className="text-[var(--muted-foreground)]">{sizeKB}KB</span>
+                    </a>
+                  );
+                })}
+              </div>
             </div>
           )}
 

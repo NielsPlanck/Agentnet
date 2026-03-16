@@ -5,8 +5,9 @@ import type { SearchResultItem } from "@/lib/api";
 
 function getFaviconUrl(baseUrl: string): string {
   try {
-    const domain = new URL(baseUrl).hostname;
-    return `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
+    const u = new URL(baseUrl);
+    // Use the site's own favicon directly — avoids Google's generic globe fallback
+    return `${u.origin}/favicon.ico`;
   } catch {
     return "";
   }
@@ -24,6 +25,10 @@ export function SourceCard({ result, selected, onSelect }: SourceCardProps) {
   const name = result.display_name || result.tool_name;
   const pct = Math.round((result.similarity ?? 0) * 100);
   const showFavicon = faviconUrl && !faviconFailed;
+  // Show tool_name as subtitle only if different from display_name, otherwise show description
+  const nameLower = name.toLowerCase().replace(/[\s\-_.\/]/g, "");
+  const toolLower = result.tool_name.toLowerCase().replace(/[\s\-_.\/]/g, "");
+  const subtitle = nameLower !== toolLower ? result.tool_name : (result.description || "");
 
   return (
     <div
@@ -32,21 +37,17 @@ export function SourceCard({ result, selected, onSelect }: SourceCardProps) {
         selected ? "bg-[var(--muted)]" : "hover:bg-[var(--muted)]/50"
       }`}
     >
-      {/* Favicon or name initial fallback */}
-      <div className="flex-shrink-0 mt-0.5 h-6 w-6 rounded-md overflow-hidden flex items-center justify-center bg-[var(--muted)]">
-        {showFavicon ? (
+      {/* Favicon from site — hidden entirely if unavailable */}
+      {showFavicon && (
+        <div className="flex-shrink-0 mt-0.5 h-6 w-6 rounded-md overflow-hidden flex items-center justify-center">
           <img
             src={faviconUrl}
             alt=""
-            className="h-4 w-4"
+            className="h-5 w-5 rounded-sm"
             onError={() => setFaviconFailed(true)}
           />
-        ) : (
-          <span className="text-[0.6rem] font-semibold text-[var(--muted-foreground)] uppercase leading-none">
-            {name.slice(0, 2)}
-          </span>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Content */}
       <div className="flex-1 min-w-0">
@@ -60,9 +61,9 @@ export function SourceCard({ result, selected, onSelect }: SourceCardProps) {
             </span>
           )}
         </div>
-        {result.description && (
-          <p className="text-[0.7rem] text-[var(--muted-foreground)] mt-0.5 line-clamp-2 leading-relaxed">
-            {result.description}
+        {subtitle && (
+          <p className="text-[0.7rem] text-[var(--muted-foreground)] mt-0.5 line-clamp-1 leading-relaxed">
+            {subtitle}
           </p>
         )}
       </div>

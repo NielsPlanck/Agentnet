@@ -245,13 +245,19 @@ export function SearchBar({ onSend, isStreaming, compact, light, mode = "agentne
     return () => clearInterval(id);
   }, [compact]);
 
-  // Auto-height textarea
+  // Auto-height textarea — use rAF to avoid layout thrashing on every keystroke
+  const valueRef = useRef(value);
+  valueRef.current = value;
+
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
-    el.style.height = "auto";
-    const lines = el.value.split("\n").length;
-    el.style.height = `${Math.min(MAX_ROWS, Math.max(MIN_ROWS, lines)) * LINE_HEIGHT}px`;
+    const raf = requestAnimationFrame(() => {
+      el.style.height = "auto";
+      const lines = el.value.split("\n").length;
+      el.style.height = `${Math.min(MAX_ROWS, Math.max(MIN_ROWS, lines)) * LINE_HEIGHT}px`;
+    });
+    return () => cancelAnimationFrame(raf);
   }, [value]);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -343,7 +349,7 @@ export function SearchBar({ onSend, isStreaming, compact, light, mode = "agentne
       setSttStatus("connecting");
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       sttStreamRef.current = stream;
-      sttBaseTextRef.current = value;
+      sttBaseTextRef.current = valueRef.current;
       sttPartialRef.current = "";
 
       // Build WS URL: in dev (Next.js on 3001) → backend on 8000; else same origin
@@ -421,7 +427,7 @@ export function SearchBar({ onSend, isStreaming, compact, light, mode = "agentne
       setSttStatus("error");
       setTimeout(() => setSttStatus("idle"), 2000);
     }
-  }, [value, stopRecording]);
+  }, [stopRecording]);
 
   // Cleanup on unmount
   useEffect(() => {

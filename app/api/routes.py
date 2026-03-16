@@ -54,6 +54,15 @@ from app.services.sheets import (
 )
 from app.services.search import search_by_intent
 from app.services.url_fetcher import extract_urls, fetch_urls_content
+from app.services.artifacts import (
+    ARTIFACTS_DIR,
+    detect_artifact_intent,
+    generate_document_artifact,
+    generate_slides_artifact,
+    DOCUMENT_INSTRUCTIONS,
+    SLIDES_INSTRUCTIONS,
+    SHEET_INSTRUCTIONS,
+)
 
 log = logging.getLogger(__name__)
 
@@ -383,12 +392,14 @@ async def _maybe_gather_context(query: str, request: Request | None = None, db: 
     if need_calendar:
         # Try Google Calendar first, fall back to Apple Calendar
         gcal_ctx = None
+        got_calendar_data = False
         if request and db:
             gcal_ctx = await _try_google_calendar(request, db)
 
         if gcal_ctx:
             parts.append(gcal_ctx)
             parts.append("")
+            got_calendar_data = True
         else:
             try:
                 events = await apple_calendar_list_events(days_ahead=3)
@@ -401,11 +412,17 @@ async def _maybe_gather_context(query: str, request: Request | None = None, db: 
                         if e.get("calendar"):
                             line += f" | Calendar: {e['calendar']}"
                         parts.append(line)
+                    got_calendar_data = True
                 else:
                     parts.append("### Calendar: No upcoming events in the next 3 days.")
+                    got_calendar_data = True
                 parts.append("")
             except Exception as e:
                 log.warning("Failed to fetch Apple calendar: %s", e)
+
+        if not got_calendar_data:
+            parts.append("### Calendar: NOT CONNECTED — The user has NOT connected their Google Calendar. You do NOT have access to their calendar data. Tell the user to sign in with Google (top-right button) to connect their calendar. Do NOT fabricate or simulate calendar data.")
+            parts.append("")
 
     if need_reminders:
         try:
@@ -447,6 +464,31 @@ async def _maybe_gather_context(query: str, request: Request | None = None, db: 
             log.warning("Failed to fetch Apple notes: %s", e)
 
     return "\n".join(parts)
+
+
+# ── Artifact file serving ─────────────────────────────────────────
+@router.get("/artifacts/{artifact_id}/{filename}")
+async def serve_artifact(artifact_id: str, filename: str):
+    """Serve a generated artifact file (document, slides, sheet)."""
+    from fastapi.responses import FileResponse
+    import mimetypes
+
+    file_path = ARTIFACTS_DIR / artifact_id / filename
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Artifact not found")
+
+    # Security: prevent path traversal
+    try:
+        file_path.resolve().relative_to(ARTIFACTS_DIR.resolve())
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    mime, _ = mimetypes.guess_type(str(file_path))
+    return FileResponse(
+        path=str(file_path),
+        media_type=mime or "application/octet-stream",
+        filename=filename,
+    )
 
 
 @router.post("/ask/stream")
@@ -502,11 +544,29 @@ async def ask_stream(request: Request, req: AskRequest, db: AsyncSession = Depen
     if live_context:
         doc_context = (doc_context + "\n\n" + live_context) if doc_context else live_context
 
+    # ── Helper: emit activity event ─────────────────────────────────
+    def _activity(action: str, status: str, detail: str = "") -> str:
+        return f"data: {json.dumps({'type': 'activity', 'action': action, 'status': status, 'detail': detail})}\n\n"
+
+    # ── Helper: emit tab title event ──────────────────────────────
+    def _tab_title(query: str) -> str:
+        """Generate a short descriptive title from the user query."""
+        q = query.strip()
+        # Remove filler words at the start
+        import re as _re2
+        q = _re2.sub(r'^(can you |please |hey |hi |help me |i want to |i need to |make me |give me |find me |create |build |generate )', '', q, flags=_re2.IGNORECASE).strip()
+        # Capitalize first letter, limit to 35 chars
+        if len(q) > 35:
+            q = q[:32].rsplit(" ", 1)[0] + "…"
+        return f"data: {json.dumps({'type': 'tab_title', 'title': q[:1].upper() + q[1:] if q else 'Chat'})}\n\n"
+
     # ── Web-only mode ──────────────────────────────────────────────
     if req.mode == "web":
         async def web_event_generator():
+            yield _tab_title(req.query)
             if url_metadata:
                 yield f"data: {json.dumps({'type': 'url_sources', 'sources': url_metadata})}\n\n"
+            yield _activity("web_search", "running", f"Searching the web for \"{req.query[:60]}\"")
             async for token, web_sources in ask_web_stream(
                 req.query, req.history, req.images or None,
                 url_context=url_context, doc_context=doc_context, binary_docs=binary_docs,
@@ -514,6 +574,7 @@ async def ask_stream(request: Request, req: AskRequest, db: AsyncSession = Depen
                 if token:
                     yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
                 if web_sources:
+                    yield _activity("web_search", "done", f"Found {len(web_sources)} sources")
                     yield f"data: {json.dumps({'type': 'web_sources', 'sources': web_sources})}\n\n"
             yield "data: [DONE]\n\n"
 
@@ -521,19 +582,28 @@ async def ask_stream(request: Request, req: AskRequest, db: AsyncSession = Depen
 
     # ── Both mode — AgentNet + Web in parallel ─────────────────────
     if req.mode == "both":
-        sources = await _search_for_ask(db, req)
-        # Kick off web search concurrently
-        import asyncio as _asyncio
-        web_task = _asyncio.create_task(
-            _collect_web_sources(
-                req.query, req.history, req.images or None,
-                doc_context=doc_context, binary_docs=binary_docs,
-            )
-        )
-
         async def both_event_generator():
+            yield _tab_title(req.query)
             if url_metadata:
                 yield f"data: {json.dumps({'type': 'url_sources', 'sources': url_metadata})}\n\n"
+
+            # Step 1: Search tools
+            yield _activity("tool_search", "running", "Searching AgentNet tools…")
+            sources = await _search_for_ask(db, req)
+            yield _activity("tool_search", "done", f"Found {len(sources)} tools")
+
+            # Step 2: Kick off web search concurrently
+            import asyncio as _asyncio
+            yield _activity("web_search", "running", f"Searching the web…")
+            web_task = _asyncio.create_task(
+                _collect_web_sources(
+                    req.query, req.history, req.images or None,
+                    doc_context=doc_context, binary_docs=binary_docs,
+                )
+            )
+
+            # Step 3: Stream LLM response
+            yield _activity("thinking", "running", "Generating response…")
             import re as _re
             tag_done = False
             prefix_buf = ""
@@ -568,6 +638,7 @@ async def ask_stream(request: Request, req: AskRequest, db: AsyncSession = Depen
             # Await web results and emit
             web_sources = await web_task
             if web_sources:
+                yield _activity("web_search", "done", f"Found {len(web_sources)} web sources")
                 yield f"data: {json.dumps({'type': 'web_sources', 'sources': web_sources})}\n\n"
 
             yield "data: [DONE]\n\n"
@@ -579,33 +650,53 @@ async def ask_stream(request: Request, req: AskRequest, db: AsyncSession = Depen
         )
 
     # ── AgentNet mode ──────────────────────────────────────────────
-    sources = await _search_for_ask(db, req)
 
-    # Create conversation record before streaming
-    conv = await _get_or_create_conversation(db, req, user)
-    seq = len(req.history) + 1
-    db.add(Message(
-        conversation_id=conv.id, seq=seq, role="user",
-        content=req.query, raw_query=req.query,
-        tools_shown={"tools": [s.tool_name for s in sources]},
-    ))
-    await db.commit()
+    # Detect artifact intent (document, slides, sheet)
+    artifact_type = detect_artifact_intent(req.query)
 
     # We'll collect the full response to save after streaming
     collected_agent: list[str] = []
 
     async def event_generator():
+        yield _tab_title(req.query)
+
         if url_metadata:
             yield f"data: {json.dumps({'type': 'url_sources', 'sources': url_metadata})}\n\n"
+
+        # Step 1: Search AgentNet tools
+        yield _activity("tool_search", "running", "Searching AgentNet tools…")
+        sources = await _search_for_ask(db, req)
+        yield _activity("tool_search", "done", f"Found {len(sources)} tools")
+
+        # Create conversation record
+        conv = await _get_or_create_conversation(db, req, user)
+        seq = len(req.history) + 1
+        db.add(Message(
+            conversation_id=conv.id, seq=seq, role="user",
+            content=req.query, raw_query=req.query,
+            tools_shown={"tools": [s.tool_name for s in sources]},
+        ))
+        await db.commit()
+
+        # Step 2: Stream LLM response
+        yield _activity("thinking", "running", "Generating response…")
         import re as _re
         tag_done = False
         prefix_buf = ""
 
-        skill_instructions2 = [(s.name, s.instructions) for s in req.enabled_skills if s.instructions.strip()] or None
+        # Inject artifact-specific instructions as a skill
+        skill_instructions2 = [(s.name, s.instructions) for s in req.enabled_skills if s.instructions.strip()] or []
+        if artifact_type == "document":
+            skill_instructions2.append(("Document Generator", DOCUMENT_INSTRUCTIONS))
+        elif artifact_type == "slides":
+            skill_instructions2.append(("Slides Generator", SLIDES_INSTRUCTIONS))
+        elif artifact_type == "sheet":
+            skill_instructions2.append(("Sheet Generator", SHEET_INSTRUCTIONS))
+
         async for token in ask_agentnet_stream(
             req.query, sources, req.history, req.images or None,
             url_context=url_context, doc_context=doc_context, binary_docs=binary_docs,
-            skill_instructions=skill_instructions2,
+            skill_instructions=skill_instructions2 or None,
         ):
             if not tag_done:
                 prefix_buf += token
@@ -632,6 +723,23 @@ async def ask_stream(request: Request, req: AskRequest, db: AsyncSession = Depen
         if prefix_buf:
             collected_agent.append(prefix_buf)
             yield f"data: {json.dumps({'type': 'token', 'content': prefix_buf})}\n\n"
+
+        # ── Generate artifact files from streamed content ──────────
+        if artifact_type in ("document", "slides"):
+            yield _activity("generating", "running", f"Creating {artifact_type} files…")
+            full_content = "".join(collected_agent)
+            try:
+                artifact_info = None
+                if artifact_type == "document":
+                    artifact_info = generate_document_artifact(full_content)
+                elif artifact_type == "slides":
+                    artifact_info = generate_slides_artifact(full_content)
+
+                if artifact_info:
+                    yield _activity("generating", "done", f"{artifact_type.title()} created")
+                    yield f"data: {json.dumps({'type': 'artifact', **artifact_info})}\n\n"
+            except Exception as _art_err:
+                log.warning("Artifact generation failed: %s", _art_err)
 
         yield f"data: {json.dumps({'type': 'sources', 'sources': [s.model_dump(mode='json') for s in sources]})}\n\n"
         yield "data: [DONE]\n\n"
